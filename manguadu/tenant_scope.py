@@ -10,6 +10,7 @@ from typing import Any
 
 DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
 SERVER_KEYS = frozenset({
+    "STATS_PROVIDER",
     "CSV_BASE_PATH", "TXT_BASE_PATH", "LOGS_PATH", "PZ_LUA_PATH", "PZ_CACHE_ROOT",
     "PZ_SAVE_ROOT", "PZ_PATH_SCAN_ROOTS", "PTERO_SERVER_ID", "PTERO_VOLUME_ID",
     "PTERO_SERVER_UUID", "PTERO_DOCKER_CONTAINER", "RCON_HOST", "RCON_PORT", "RCON_PASSWORD",
@@ -24,6 +25,7 @@ class GuildScope:
     server: dict[str, Any] | None = None
     environment: dict[str, str] = field(default_factory=dict)
     runtime: Any = None
+    language: str = "pt-BR"
 
 _CURRENT: ContextVar[GuildScope | None] = ContextVar("friendhost_guild", default=None)
 

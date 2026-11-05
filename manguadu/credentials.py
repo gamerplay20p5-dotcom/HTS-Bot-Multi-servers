@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import base64
 import hashlib
 
@@ -10,7 +12,7 @@ from cryptography.fernet import Fernet
 
 def _cipher(secret: str) -> Fernet:
     if not secret:
-        raise ValueError("DISCORD_TOKEN ou WL_ENCRYPTION_KEY necessario para proteger senhas pendentes.")
+        raise ValueError(t('DISCORD_TOKEN ou WL_ENCRYPTION_KEY necessario para proteger senhas pendentes.'))
     key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode("utf-8")).digest())
     return Fernet(key)
 

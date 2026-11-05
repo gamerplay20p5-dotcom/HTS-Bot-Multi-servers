@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t, HTSTranslator, mark_command_strings
+
 from .tenant_scope import getenv, current_scope, activate, use_scope, scoped_guilds, GuildScope, tenant_path
 
 import asyncio
@@ -21,7 +23,7 @@ from discord import app_commands
 
 from .config_store import ConfigStore
 from .guild_runtime import GuildRuntime, normalize_binding
-from .guild_ui import GuildCommandTree, GuildView, GuildModal, ServerConfigView
+from .guild_ui import GuildCommandTree, GuildView, GuildModal, ServerConfigView, LanguageView
 from .work_queue import StaggeredQueue, TransientJobError
 from .automation_scheduler import AutomationScheduler, get_timezone
 from .anticheat_alerts import AntiCheatMonitor
@@ -49,22 +51,22 @@ from .watchers import FriendHostWatcher
 logger = logging.getLogger(__name__)
 
 CHANNEL_LABELS = {
-    "admin": "Administração",
-    "chat": "Chat PZ",
-    "evolution": "Evolução",
-    "stats": "Status",
-    "ranking": "Ranking",
+    "admin": 'Administração',
+    "chat": 'Chat PZ',
+    "evolution": 'Evolução',
+    "stats": 'Status',
+    "ranking": 'Ranking',
     "anticheat": "Anticheat",
-    "ticket_panel": "Painel de tickets",
-    "lore": "Lore para leitura",
-    "wl_audit": "Auditoria da WL",
-    "wl_decisions": "Decisões da WL",
+    "ticket_panel": 'Painel de tickets',
+    "lore": 'Lore para leitura',
+    "wl_audit": 'Auditoria da WL',
+    "wl_decisions": 'Decisões da WL',
 }
 MAX_LORE_UPLOAD_BYTES = 40 * 1024 * 1024
 
 
 def _channel_display(channel_id: int | None) -> str:
-    return f"<#{channel_id}>" if channel_id else "Não definido"
+    return f"<#{channel_id}>" if channel_id else t('Não definido')
 
 
 def _quote_pz(value: str) -> str:
@@ -113,22 +115,22 @@ def _parse_players_output(value: str) -> list[str]:
 
 async def _read_lore_attachment(attachment: discord.Attachment) -> tuple[str | None, str | None]:
     if not attachment.filename.casefold().endswith(".txt"):
-        return None, "Envie um arquivo de texto com extensao .txt."
+        return None, t('Envie um arquivo de texto com extensao .txt.')
     if attachment.size > MAX_LORE_UPLOAD_BYTES:
-        return None, "O arquivo excede o limite de 40 MiB do bot."
+        return None, t('O arquivo excede o limite de 40 MiB do bot.')
     try:
         raw = await attachment.read()
         if len(raw) > MAX_LORE_UPLOAD_BYTES:
-            return None, "O arquivo excede o limite de 40 MiB do bot."
+            return None, t('O arquivo excede o limite de 40 MiB do bot.')
         content = raw.decode("utf-8-sig").strip()
     except UnicodeDecodeError:
-        return None, "O arquivo precisa estar codificado em UTF-8."
+        return None, t('O arquivo precisa estar codificado em UTF-8.')
     except discord.HTTPException:
-        return None, "Nao foi possivel baixar o arquivo anexado. Tente envia-lo novamente."
+        return None, t('Nao foi possivel baixar o arquivo anexado. Tente envia-lo novamente.')
     if len(content) > MAX_LORE_CHARS:
-        return None, f"A lore excede o limite de {MAX_LORE_CHARS:,} caracteres."
+        return None, ''.join((format(t('A lore excede o limite de '), ''), format(MAX_LORE_CHARS, ''.join((',',))), format(t(' caracteres.'), '')))
     if not content:
-        return None, "O arquivo esta vazio."
+        return None, t('O arquivo esta vazio.')
     return content, None
 
 
@@ -146,11 +148,11 @@ def _make_lore_files(lore: str, username: str, max_file_bytes: int) -> list[disc
             while end > offset and payload[end] & 0xC0 == 0x80:
                 end -= 1
         if end <= offset:
-            raise ValueError("O limite de anexo do Discord e pequeno demais para exportar esta lore.")
+            raise ValueError(t('O limite de anexo do Discord e pequeno demais para exportar esta lore.'))
         chunks.append(payload[offset:end])
         offset = end
         if len(chunks) > 10:
-            raise ValueError("A lore excede o limite de anexos deste servidor Discord; aumente o limite de upload ou reduza o arquivo.")
+            raise ValueError(t('A lore excede o limite de anexos deste servidor Discord; aumente o limite de upload ou reduza o arquivo.'))
 
     safe_username = re.sub(r"[^A-Za-z0-9._-]+", "_", clean_text(username)).strip("._-")[:80] or "jogador"
     total = len(chunks)
@@ -184,16 +186,16 @@ def _is_admin(member: discord.abc.User, config: dict[str, Any]) -> bool:
 
 async def _admin_guard(interaction: discord.Interaction, store: ConfigStore) -> bool:
     if interaction.guild is None or not _is_admin(interaction.user, store.get_settings(interaction.guild.id)):
-        await interaction.response.send_message("Apenas administradores podem usar este painel.", ephemeral=True)
+        await interaction.response.send_message(t('Apenas administradores podem usar este painel.'), ephemeral=True)
         return False
     return True
 
 
 def _home_embed(config: dict[str, Any]) -> discord.Embed:
-    embed = discord.Embed(title="⚙️ Configuração do HTS Bot Multi servers", description="Escolha uma seção abaixo. Alterações são salvas para este servidor Discord.", color=0x28D17C)
-    embed.add_field(name="Tickets", value=f"Painel: {_channel_display(config['channels']['ticket_panel'])}\nCategoria: {_channel_display(config['ticket_category_id'])}", inline=False)
-    embed.add_field(name="Whitelist", value=f"{'Ativa' if config['wl']['enabled'] else 'Pausada'} • Lore {'obrigatória' if config['wl']['require_lore'] else 'opcional'} • PZ: `{config['wl']['server_id']}`", inline=False)
-    embed.set_footer(text="Vincule o servidor em /config. Chaves de infraestrutura ficam no dedicado; Gemini em /config_api.")
+    embed = discord.Embed(title=t('⚙️ Configuração do HTS Bot Multi servers'), description=t('Escolha uma seção abaixo. Alterações são salvas para este servidor Discord.'), color=0x28D17C)
+    embed.add_field(name=t('Tickets'), value=''.join((format(t('Painel: '), ''), format(_channel_display(config['channels']['ticket_panel']), ''), format(t('\nCategoria: '), ''), format(_channel_display(config['ticket_category_id']), ''))), inline=False)
+    embed.add_field(name="Whitelist", value=''.join((format(t('Ativa') if config['wl']['enabled'] else t('Pausada'), ''), format(t(' • Lore '), ''), format(t('obrigatória') if config['wl']['require_lore'] else t('opcional'), ''), ' • PZ: `', format(config['wl']['server_id'], ''), '`')), inline=False)
+    embed.set_footer(text=t('Vincule o servidor em /config. Chaves de infraestrutura ficam no dedicado; Gemini em /config_api.'))
     return embed
 
 
@@ -209,24 +211,29 @@ class AdminView(GuildView):
 
 
 class ConfigHomeView(AdminView):
-    @discord.ui.button(label="Servidor PZ /config", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Idioma / Language", style=discord.ButtonStyle.secondary, row=1)
+    async def choose_language(self, interaction, _button):
+        fresh = LanguageView(self.bot, self.guild_id)
+        await interaction.response.edit_message(embed=fresh.embed(), view=fresh)
+
+    @discord.ui.button(label='Servidor PZ /config', style=discord.ButtonStyle.secondary)
     async def server_binding(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         view = ServerConfigView(self.bot, self.guild_id)
         await interaction.response.edit_message(embed=view.embed(), view=view)
 
-    @discord.ui.button(label="Canais", emoji="📺", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label='Canais', emoji="📺", style=discord.ButtonStyle.primary)
     async def channels(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-        await interaction.response.edit_message(embed=discord.Embed(title="📺 Canais do bot", description="Escolha a função e depois selecione o canal. Os IDs ficam salvos pelo Discord.", color=0x28D17C), view=ChannelsView(self.bot, self.guild_id))
+        await interaction.response.edit_message(embed=discord.Embed(title=t('📺 Canais do bot'), description=t('Escolha a função e depois selecione o canal. Os IDs ficam salvos pelo Discord.'), color=0x28D17C), view=ChannelsView(self.bot, self.guild_id))
 
-    @discord.ui.button(label="Tickets", emoji="🎫", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label='Tickets', emoji="🎫", style=discord.ButtonStyle.primary)
     async def tickets(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.edit_message(embed=tickets_embed(self.bot.store.get_settings(self.guild_id)), view=TicketsConfigView(self.bot, self.guild_id))
 
-    @discord.ui.button(label="Config WL", emoji="🧟", style=discord.ButtonStyle.success)
+    @discord.ui.button(label='Config WL', emoji="🧟", style=discord.ButtonStyle.success)
     async def whitelist(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.edit_message(embed=wl_embed(self.bot.store.get_settings(self.guild_id)), view=WhitelistConfigView(self.bot, self.guild_id))
 
-    @discord.ui.button(label="Kick automático por voz", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label='Kick automático por voz', style=discord.ButtonStyle.danger)
     async def kick_automatico(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         view = KickAutoConfigView(self.bot, self.guild_id)
         await interaction.response.edit_message(embed=view.embed(), view=view)
@@ -236,7 +243,7 @@ class KickAutoConfigView(AdminView):
     def __init__(self, bot: "ManguaduBot", guild_id: int):
         super().__init__(bot, guild_id)
         channel_select = discord.ui.ChannelSelect(
-            placeholder="Call de voz obrigatória",
+            placeholder=t('Call de voz obrigatória'),
             channel_types=[discord.ChannelType.voice],
             min_values=1,
             max_values=1,
@@ -250,15 +257,9 @@ class KickAutoConfigView(AdminView):
         kick_config = config["kick_automatico"]
         channel_id = kick_config.get("voice_channel_id")
         embed = discord.Embed(
-            title="Configuração: Kick automático por voz",
+            title=t('Configuração: Kick automático por voz'),
             description=(
-                f"Fiscalização: **{'ATIVA' if kick_config['enabled'] else 'pausada'}**\n"
-                f"Call obrigatória: {_channel_display(channel_id)}\n\n"
-                "Servidor PZ: vínculo exclusivo definido em /config.\n\n"
-                "A cada 10 segundos, o bot consulta `/players` via RCON e compara os usuários PZ com os vínculos PZ/Discord. "
-                "Quem ficar fora da call escolhida por 60 segundos recebe kick com o nome da call no motivo.\n\n"
-                "Vincule cada jogador antes de ativar usando `/painel jogadores vincular`. Jogadores sem vínculo também contam como fora da call. "
-                "Se RCON, a lista de jogadores ou o canal de voz não puderem ser verificados, o bot não aplica kicks naquele ciclo."
+                ''.join((format(t('Fiscalização: **'), ''), format(t('ATIVA') if kick_config['enabled'] else t('pausada'), ''), format(t('**\nCall obrigatória: '), ''), format(_channel_display(channel_id), ''), format(t('\n\nServidor PZ: vínculo exclusivo definido em /config.\n\nA cada 10 segundos, o bot consulta `/players` via RCON e compara os usuários PZ com os vínculos PZ/Discord. Quem ficar fora da call escolhida por 60 segundos recebe kick com o nome da call no motivo.\n\nVincule cada jogador antes de ativar usando `/painel jogadores vincular`. Jogadores sem vínculo também contam como fora da call. Se RCON, a lista de jogadores ou o canal de voz não puderem ser verificados, o bot não aplica kicks naquele ciclo.'), '')))
             ),
             color=0xD84A4A if kick_config["enabled"] else 0x7F8C8D,
         )
@@ -267,14 +268,14 @@ class KickAutoConfigView(AdminView):
     async def select_voice_channel(self, interaction: discord.Interaction) -> None:
         config = self.bot.store.get_settings(self.guild_id)["kick_automatico"]
         if config["enabled"]:
-            await interaction.response.send_message("Pause a fiscalização antes de trocar a call obrigatória.", ephemeral=True)
+            await interaction.response.send_message(t('Pause a fiscalização antes de trocar a call obrigatória.'), ephemeral=True)
             return
         channel = interaction.data["values"][0]
         channel_id = int(channel)
         self.bot.store.set_value(self.guild_id, "kick_automatico", "voice_channel_id", channel_id)
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
-    @discord.ui.button(label="Ativar / pausar fiscalização", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label='Ativar / pausar fiscalização', style=discord.ButtonStyle.danger, row=1)
     async def toggle(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         config = self.bot.store.get_settings(self.guild_id)["kick_automatico"]
         if config["enabled"]:
@@ -292,7 +293,7 @@ class KickAutoConfigView(AdminView):
         if message:
             await interaction.followup.send(message, ephemeral=True)
 
-    @discord.ui.button(label="Voltar", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label='Voltar', style=discord.ButtonStyle.secondary, row=1)
     async def back(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.edit_message(embed=_home_embed(self.bot.store.get_settings(self.guild_id)), view=ConfigHomeView(self.bot, self.guild_id))
 
@@ -302,47 +303,47 @@ class ChannelsView(AdminView):
         super().__init__(bot, guild_id)
         self.selected_key = "admin"
         self.function_select = discord.ui.Select(
-            placeholder="Qual função usará o canal?",
+            placeholder=t('Qual função usará o canal?'),
             options=[discord.SelectOption(label=label, value=key) for key, label in CHANNEL_LABELS.items()],
         )
         self.function_select.callback = self.choose_function
         self.add_item(self.function_select)
-        self.channel_select = discord.ui.ChannelSelect(placeholder="Selecione um canal de texto", channel_types=[discord.ChannelType.text], min_values=1, max_values=1)
+        self.channel_select = discord.ui.ChannelSelect(placeholder=t('Selecione um canal de texto'), channel_types=[discord.ChannelType.text], min_values=1, max_values=1)
         self.channel_select.callback = self.choose_channel
         self.add_item(self.channel_select)
 
     async def choose_function(self, interaction: discord.Interaction) -> None:
         self.selected_key = self.function_select.values[0]
-        await interaction.response.edit_message(embed=discord.Embed(title="📺 Canais do bot", description=f"Função selecionada: **{CHANNEL_LABELS[self.selected_key]}**. Agora escolha o canal.", color=0x28D17C), view=self)
+        await interaction.response.edit_message(embed=discord.Embed(title=t('📺 Canais do bot'), description=''.join((format(t('Função selecionada: **'), ''), format(t(CHANNEL_LABELS[self.selected_key]), ''), format(t('**. Agora escolha o canal.'), ''))), color=0x28D17C), view=self)
 
     async def choose_channel(self, interaction: discord.Interaction) -> None:
         channel = self.channel_select.values[0]
         self.bot.store.set_value(self.guild_id, "channels", self.selected_key, channel.id)
-        await interaction.response.edit_message(embed=discord.Embed(title="✅ Canal salvo", description=f"**{CHANNEL_LABELS[self.selected_key]}** → <#{channel.id}>\nEscolha outra função ou volte ao início.", color=0x28D17C), view=self)
+        await interaction.response.edit_message(embed=discord.Embed(title=t('✅ Canal salvo'), description=''.join(('**', format(t(CHANNEL_LABELS[self.selected_key]), ''), '** → <#', format(channel.id, ''), format(t('>\nEscolha outra função ou volte ao início.'), ''))), color=0x28D17C), view=self)
 
-    @discord.ui.button(label="Voltar", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label='Voltar', style=discord.ButtonStyle.secondary, row=2)
     async def back(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.edit_message(embed=_home_embed(self.bot.store.get_settings(self.guild_id)), view=ConfigHomeView(self.bot, self.guild_id))
 
 
 def tickets_embed(config: dict[str, Any]) -> discord.Embed:
-    embed = discord.Embed(title="🎫 Configuração de tickets", description="Selecione o canal do painel, a categoria dos tickets e um cargo de equipe. Depois publique a mensagem de abertura.", color=0x28D17C)
+    embed = discord.Embed(title=t('🎫 Configuração de tickets'), description=t('Selecione o canal do painel, a categoria dos tickets e um cargo de equipe. Depois publique a mensagem de abertura.'), color=0x28D17C)
     embed.add_field(name="Painel", value=_channel_display(config["channels"]["ticket_panel"]))
     embed.add_field(name="Categoria", value=_channel_display(config["ticket_category_id"]))
-    embed.add_field(name="Cargo da equipe", value=f"<@&{config['admin_role_id']}>" if config["admin_role_id"] else "Administradores do Discord")
+    embed.add_field(name=t('Cargo da equipe'), value=f"<@&{config['admin_role_id']}>" if config["admin_role_id"] else t('Administradores do Discord'))
     return embed
 
 
 class TicketsConfigView(AdminView):
     def __init__(self, bot: "ManguaduBot", guild_id: int):
         super().__init__(bot, guild_id)
-        panel = discord.ui.ChannelSelect(placeholder="Canal do painel de tickets", channel_types=[discord.ChannelType.text])
+        panel = discord.ui.ChannelSelect(placeholder=t('Canal do painel de tickets'), channel_types=[discord.ChannelType.text])
         panel.callback = self.select_panel
         self.add_item(panel)
-        category = discord.ui.ChannelSelect(placeholder="Categoria dos tickets", channel_types=[discord.ChannelType.category])
+        category = discord.ui.ChannelSelect(placeholder=t('Categoria dos tickets'), channel_types=[discord.ChannelType.category])
         category.callback = self.select_category
         self.add_item(category)
-        role = discord.ui.RoleSelect(placeholder="Cargo da equipe que verá os tickets")
+        role = discord.ui.RoleSelect(placeholder=t('Cargo da equipe que verá os tickets'))
         role.callback = self.select_role
         self.add_item(role)
 
@@ -359,50 +360,50 @@ class TicketsConfigView(AdminView):
         self.bot.store.set_top_value(self.guild_id, "admin_role_id", int(interaction.data["values"][0]))
         await interaction.response.edit_message(embed=tickets_embed(self.bot.store.get_settings(self.guild_id)), view=self)
 
-    @discord.ui.button(label="Publicar painel", emoji="📣", style=discord.ButtonStyle.success, row=3)
+    @discord.ui.button(label='Publicar painel', emoji="📣", style=discord.ButtonStyle.success, row=3)
     async def publish(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.defer(ephemeral=True)
         try:
             channel = await self.bot.publish_ticket_panel(interaction.guild)
         except (ValueError, discord.HTTPException) as exc:
-            await interaction.followup.send(f"Não foi possível publicar: {exc}", ephemeral=True)
+            await interaction.followup.send(''.join((format(t('Não foi possível publicar: '), ''), format(exc, ''))), ephemeral=True)
             return
-        await interaction.followup.send(f"Painel publicado em {channel.mention}.", ephemeral=True)
+        await interaction.followup.send(''.join((format(t('Painel publicado em '), ''), format(channel.mention, ''), '.')), ephemeral=True)
 
-    @discord.ui.button(label="Voltar", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label='Voltar', style=discord.ButtonStyle.secondary, row=3)
     async def back(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.edit_message(embed=_home_embed(self.bot.store.get_settings(self.guild_id)), view=ConfigHomeView(self.bot, self.guild_id))
 
 
 def wl_embed(config: dict[str, Any]) -> discord.Embed:
     wl = config["wl"]
-    embed = discord.Embed(title="🧟 Config WL", description="Com uma chave em /config_api, o Gemini avalia coerência, cronologia e contradições. Sem chave, a triagem lexical local é usada. A equipe pode revisar cada pedido.", color=0x28D17C)
-    embed.add_field(name="WL", value="Ativa" if wl["enabled"] else "Pausada")
-    embed.add_field(name="Lore", value="Obrigatória" if wl["require_lore"] else "Opcional")
-    embed.add_field(name="Falha na triagem", value="Revisão da equipe" if wl["review_failed_lore"] else "Recusa automática")
-    embed.add_field(name="Decisão", value="Automática com revisão de falhas" if wl["auto_approve"] else "Revisão manual de todos os pedidos")
-    embed.add_field(name="Canal da lore", value=_channel_display(config["channels"]["lore"]))
+    embed = discord.Embed(title=t('🧟 Config WL'), description=t('Com uma chave em /config_api, o Gemini avalia coerência, cronologia e contradições. Sem chave, a triagem lexical local é usada. A equipe pode revisar cada pedido.'), color=0x28D17C)
+    embed.add_field(name=t('WL'), value=t('Ativa') if wl["enabled"] else t('Pausada'))
+    embed.add_field(name=t('Lore'), value=t('Obrigatória') if wl["require_lore"] else t('Opcional'))
+    embed.add_field(name=t('Falha na triagem'), value=t('Revisão da equipe') if wl["review_failed_lore"] else t('Recusa automática'))
+    embed.add_field(name=t('Decisão'), value=t('Automática com revisão de falhas') if wl["auto_approve"] else t('Revisão manual de todos os pedidos'))
+    embed.add_field(name=t('Canal da lore'), value=_channel_display(config["channels"]["lore"]))
     embed.add_field(name="Auditoria", value=_channel_display(config["channels"]["wl_audit"]))
-    embed.add_field(name="Decisões", value=_channel_display(config["channels"]["wl_decisions"]))
-    embed.add_field(name="Servidor PZ", value="Vínculo exclusivo definido em /config")
-    embed.add_field(name="Lore base", value=f"{len(wl['lore_reference'])} caracteres configurados", inline=False)
+    embed.add_field(name=t('Decisões'), value=_channel_display(config["channels"]["wl_decisions"]))
+    embed.add_field(name=t('Servidor PZ'), value=t('Vínculo exclusivo definido em /config'))
+    embed.add_field(name=t('Lore base'), value=''.join((format(len(wl['lore_reference']), ''), format(t(' caracteres configurados'), ''))), inline=False)
     return embed
 
 
-class LoreReferenceModal(GuildModal, title="Lore base da whitelist"):
+class LoreReferenceModal(GuildModal, title='Lore base da whitelist'):
     def __init__(self, bot: "ManguaduBot", guild_id: int):
         super().__init__()
         self.bot = bot
         self.guild_id = guild_id
         current = bot.store.get_settings(guild_id)["wl"]["lore_reference"]
-        self.reference = discord.ui.TextInput(label="Lore oficial do servidor (até 4.000 caracteres)", style=discord.TextStyle.paragraph, default=current[:4000], min_length=80, max_length=4000)
+        self.reference = discord.ui.TextInput(label=t('Lore oficial do servidor (até 4.000 caracteres)'), style=discord.TextStyle.paragraph, default=current[:4000], min_length=80, max_length=4000)
         self.add_item(self.reference)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not await _admin_guard(interaction, self.bot.store):
             return
         self.bot.store.set_value(self.guild_id, "wl", "lore_reference", str(self.reference.value).strip())
-        await interaction.response.send_message("Lore base salva. Novos pedidos serão comparados com este texto.", ephemeral=True)
+        await interaction.response.send_message(t('Lore base salva. Novos pedidos serão comparados com este texto.'), ephemeral=True)
 
 
 class WhitelistConfigView(AdminView):
@@ -412,17 +413,18 @@ class WhitelistConfigView(AdminView):
         servers = [scope.server] if scope.server else []
         if not servers:
             return
-        server_select = discord.ui.Select(placeholder="Servidor PZ vinculado a este Discord", options=[discord.SelectOption(label=s["label"][:100], value=s["id"][:100]) for s in servers])
+        server_select = discord.ui.Select(placeholder=t('Servidor PZ vinculado a este Discord'), options=[discord.SelectOption(label=s["label"][:100], value=s["id"][:100]) for s in servers])
         server_select.callback = self.select_server
+        server_select._hts_user_options = True
         self.add_item(server_select)
 
     async def select_server(self, interaction: discord.Interaction) -> None:
         if self.bot.store.get_settings(self.guild_id)["kick_automatico"]["enabled"]:
-            await interaction.response.send_message("Pause a fiscalização por voz antes de trocar o servidor PZ selecionado.", ephemeral=True)
+            await interaction.response.send_message(t('Pause a fiscalização por voz antes de trocar o servidor PZ selecionado.'), ephemeral=True)
             return
         server_id = str(interaction.data["values"][0])
         if self.bot.registry.get_server(server_id) is None:
-            await interaction.response.send_message("Servidor não encontrado.", ephemeral=True)
+            await interaction.response.send_message(t('Servidor não encontrado.'), ephemeral=True)
             return
         self.bot.store.set_value(self.guild_id, "wl", "server_id", server_id)
         await interaction.response.edit_message(embed=wl_embed(self.bot.store.get_settings(self.guild_id)), view=self)
@@ -432,53 +434,53 @@ class WhitelistConfigView(AdminView):
         if key == "review_failed_lore" and current:
             config = self.bot.store.get_settings(self.guild_id)
             if not config["channels"]["wl_decisions"]:
-                await interaction.response.send_message("Configure primeiro o canal de decisões da WL.", ephemeral=True)
+                await interaction.response.send_message(t('Configure primeiro o canal de decisões da WL.'), ephemeral=True)
                 return
         self.bot.store.set_value(self.guild_id, "wl", key, not current)
         await interaction.response.edit_message(embed=wl_embed(self.bot.store.get_settings(self.guild_id)), view=self)
 
-    @discord.ui.button(label="Ativar/pausar WL", style=discord.ButtonStyle.primary, row=3)
+    @discord.ui.button(label='Ativar/pausar WL', style=discord.ButtonStyle.primary, row=3)
     async def toggle_enabled(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await self._toggle(interaction, "enabled")
 
-    @discord.ui.button(label="Exigir lore", style=discord.ButtonStyle.primary, row=3)
+    @discord.ui.button(label='Exigir lore', style=discord.ButtonStyle.primary, row=3)
     async def toggle_lore(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await self._toggle(interaction, "require_lore")
 
-    @discord.ui.button(label="Revisar falhas", style=discord.ButtonStyle.primary, row=3)
+    @discord.ui.button(label='Revisar falhas', style=discord.ButtonStyle.primary, row=3)
     async def toggle_review(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await self._toggle(interaction, "review_failed_lore")
 
-    @discord.ui.button(label="Aprovação automática", style=discord.ButtonStyle.success, row=4)
+    @discord.ui.button(label='Aprovação automática', style=discord.ButtonStyle.success, row=4)
     async def toggle_auto(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         config = self.bot.store.get_settings(self.guild_id)
         if not config["wl"]["auto_approve"] and (
             not _configured_private_channel(interaction.guild, config["channels"]["wl_audit"])
             or not _configured_text_channel(interaction.guild, config["channels"]["wl_decisions"])
         ):
-            await interaction.response.send_message("Configure primeiro os canais de auditoria e decisões da WL.", ephemeral=True)
+            await interaction.response.send_message(t('Configure primeiro os canais de auditoria e decisões da WL.'), ephemeral=True)
             return
         await self._toggle(interaction, "auto_approve")
 
-    @discord.ui.button(label="Definir lore base", style=discord.ButtonStyle.success, row=4)
+    @discord.ui.button(label='Definir lore base', style=discord.ButtonStyle.success, row=4)
     async def set_lore(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if len(self.bot.store.get_settings(self.guild_id)["wl"]["lore_reference"]) > 4000:
-            await interaction.response.send_message("A lore atual é maior que o limite do modal do Discord. Use /config_lore e anexe um arquivo .txt para substituir a lore base.", ephemeral=True)
+            await interaction.response.send_message(t('A lore atual é maior que o limite do modal do Discord. Use /config_lore e anexe um arquivo .txt para substituir a lore base.'), ephemeral=True)
             return
         await interaction.response.send_modal(LoreReferenceModal(self.bot, self.guild_id))
 
-    @discord.ui.button(label="Importar lore .txt", style=discord.ButtonStyle.primary, row=4)
+    @discord.ui.button(label='Importar lore .txt', style=discord.ButtonStyle.primary, row=4)
     async def import_lore_file(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.send_message(
-            f"Para configurar lore longa, use `/config_lore` em um canal privado da equipe e anexe um arquivo .txt. Limite do bot: {MAX_LORE_CHARS:,} caracteres. O campo de texto do modal do Discord aceita no maximo 4.000.",
+            ''.join((format(t('Para configurar lore longa, use `/config_lore` em um canal privado da equipe e anexe um arquivo .txt. Limite do bot: '), ''), format(MAX_LORE_CHARS, ''.join((',',))), format(t(' caracteres. O campo de texto do modal do Discord aceita no maximo 4.000.'), ''))),
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Canais da WL", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label='Canais da WL', style=discord.ButtonStyle.secondary, row=4)
     async def wl_channels(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-        await interaction.response.edit_message(embed=discord.Embed(title="📺 Canais da WL", description="Defina onde fica a lore, onde chegam os resumos e onde chegam as aprovações e reprovações.", color=0x28D17C), view=WhitelistChannelsView(self.bot, self.guild_id))
+        await interaction.response.edit_message(embed=discord.Embed(title=t('📺 Canais da WL'), description=t('Defina onde fica a lore, onde chegam os resumos e onde chegam as aprovações e reprovações.'), color=0x28D17C), view=WhitelistChannelsView(self.bot, self.guild_id))
 
-    @discord.ui.button(label="Voltar", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label='Voltar', style=discord.ButtonStyle.secondary, row=4)
     async def back(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.edit_message(embed=_home_embed(self.bot.store.get_settings(self.guild_id)), view=ConfigHomeView(self.bot, self.guild_id))
 
@@ -487,22 +489,22 @@ class WhitelistChannelsView(AdminView):
     def __init__(self, bot: "ManguaduBot", guild_id: int):
         super().__init__(bot, guild_id)
         for key, placeholder in (
-            ("lore", "Canal da lore para o jogador ler"),
-            ("wl_audit", "Canal privado de auditoria da WL"),
-            ("wl_decisions", "Canal de aprovações e reprovações"),
+            ("lore", t('Canal da lore para o jogador ler')),
+            ("wl_audit", t('Canal privado de auditoria da WL')),
+            ("wl_decisions", t('Canal de aprovações e reprovações')),
         ):
             select = discord.ui.ChannelSelect(placeholder=placeholder, channel_types=[discord.ChannelType.text])
             async def save(interaction: discord.Interaction, setting: str = key) -> None:
                 channel_id = int(interaction.data["values"][0])
                 if setting == "wl_audit" and not _configured_private_channel(interaction.guild, channel_id):
-                    await interaction.response.send_message("Use um canal privado para auditoria: @everyone não deve poder vê-lo.", ephemeral=True)
+                    await interaction.response.send_message(t('Use um canal privado para auditoria: @everyone não deve poder vê-lo.'), ephemeral=True)
                     return
                 self.bot.store.set_value(self.guild_id, "channels", setting, channel_id)
                 await interaction.response.edit_message(embed=wl_embed(self.bot.store.get_settings(self.guild_id)), view=self)
             select.callback = save
             self.add_item(select)
 
-    @discord.ui.button(label="Voltar à WL", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label='Voltar à WL', style=discord.ButtonStyle.secondary, row=3)
     async def back(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.edit_message(embed=wl_embed(self.bot.store.get_settings(self.guild_id)), view=WhitelistConfigView(self.bot, self.guild_id))
 
@@ -512,7 +514,7 @@ class PublicTicketView(GuildView):
         super().__init__(timeout=None)
         self.bot = bot
 
-    @discord.ui.button(label="Abrir ticket", emoji="🎫", style=discord.ButtonStyle.success, custom_id="manguadu:ticket:open:v1")
+    @discord.ui.button(label='Abrir ticket', emoji="🎫", style=discord.ButtonStyle.success, custom_id="manguadu:ticket:open:v1")
     async def open_ticket(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await self.bot.open_ticket(interaction)
 
@@ -522,35 +524,35 @@ class TicketActionView(GuildView):
         super().__init__(timeout=None)
         self.bot = bot
 
-    @discord.ui.button(label="Criar personagem / WL", emoji="🧟", style=discord.ButtonStyle.primary, custom_id="manguadu:ticket:wl:v1")
+    @discord.ui.button(label='Criar personagem / WL', emoji="🧟", style=discord.ButtonStyle.primary, custom_id="manguadu:ticket:wl:v1")
     async def apply_whitelist(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         ticket = self.bot.store.get_ticket(interaction.channel_id)
         if not ticket or ticket["status"] != "open" or ticket["user_id"] != interaction.user.id:
-            await interaction.response.send_message("Somente quem abriu este ticket pode enviar a WL.", ephemeral=True)
+            await interaction.response.send_message(t('Somente quem abriu este ticket pode enviar a WL.'), ephemeral=True)
             return
         config = self.bot.store.get_settings(ticket["guild_id"])
         if not config["wl"]["enabled"]:
-            await interaction.response.send_message("A criação de WL está pausada.", ephemeral=True)
+            await interaction.response.send_message(t('A criação de WL está pausada.'), ephemeral=True)
             return
         if config["wl"]["require_lore"] and not config["wl"]["lore_reference"].strip():
-            await interaction.response.send_message("A equipe ainda não definiu a lore base. Tente novamente depois.", ephemeral=True)
+            await interaction.response.send_message(t('A equipe ainda não definiu a lore base. Tente novamente depois.'), ephemeral=True)
             return
         await interaction.response.send_modal(WhitelistModal(self.bot, ticket, config["wl"]["require_lore"]))
 
-    @discord.ui.button(label="Enviar lore longa (.txt)", style=discord.ButtonStyle.secondary, custom_id="manguadu:ticket:wl-file:v1")
+    @discord.ui.button(label='Enviar lore longa (.txt)', style=discord.ButtonStyle.secondary, custom_id="manguadu:ticket:wl-file:v1")
     async def apply_whitelist_file(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         ticket = self.bot.store.get_ticket(interaction.channel_id)
         if not ticket or ticket["status"] != "open" or ticket["user_id"] != interaction.user.id:
-            await interaction.response.send_message("Somente quem abriu este ticket pode enviar a WL.", ephemeral=True)
+            await interaction.response.send_message(t('Somente quem abriu este ticket pode enviar a WL.'), ephemeral=True)
             return
-        await interaction.response.send_message("Anexe o arquivo .txt e execute `/wl lore` selecionando esse arquivo. Depois, preencha usuario, personagem e senha no formulario privado. Limite do bot: 9.999.999 caracteres.", ephemeral=True)
+        await interaction.response.send_message(t('Anexe o arquivo .txt e execute `/wl lore` selecionando esse arquivo. Depois, preencha usuario, personagem e senha no formulario privado. Limite do bot: 9.999.999 caracteres.'), ephemeral=True)
 
-    @discord.ui.button(label="Fechar ticket", emoji="🔒", style=discord.ButtonStyle.secondary, custom_id="manguadu:ticket:close:v1")
+    @discord.ui.button(label='Fechar ticket', emoji="🔒", style=discord.ButtonStyle.secondary, custom_id="manguadu:ticket:close:v1")
     async def close_ticket(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await self.bot.close_ticket(interaction)
 
 
-class WhitelistModal(GuildModal, title="Criação de personagem PZ"):
+class WhitelistModal(GuildModal, title='Criação de personagem PZ'):
     require_binding = True
     def __init__(self, bot: "ManguaduBot", ticket: dict[str, Any], require_lore: bool, lore_file_text: str | Path | None = None):
         super().__init__(timeout=300)
@@ -558,14 +560,14 @@ class WhitelistModal(GuildModal, title="Criação de personagem PZ"):
         self.ticket = ticket
         self.require_lore = require_lore
         self.lore_file_text = lore_file_text
-        self.username = discord.ui.TextInput(label="Usuário para entrar no PZ", min_length=3, max_length=32, placeholder="Ex.: Malaio_01")
-        self.character = discord.ui.TextInput(label="Nome do personagem", min_length=2, max_length=80)
-        self.password = discord.ui.TextInput(label="Senha PZ (opcional; vazio = gerada)", required=False, min_length=8, max_length=64, placeholder="8 a 64 caracteres sem espaços ou aspas")
+        self.username = discord.ui.TextInput(label=t('Usuário para entrar no PZ'), min_length=3, max_length=32, placeholder=t('Ex.: Malaio_01'))
+        self.character = discord.ui.TextInput(label=t('Nome do personagem'), min_length=2, max_length=80)
+        self.password = discord.ui.TextInput(label=t('Senha PZ (opcional; vazio = gerada)'), required=False, min_length=8, max_length=64, placeholder=t('8 a 64 caracteres sem espaços ou aspas'))
         self.add_item(self.username)
         self.add_item(self.character)
         self.add_item(self.password)
         if lore_file_text is None:
-            self.lore = discord.ui.TextInput(label="História do personagem (até 4.000)", style=discord.TextStyle.paragraph, required=require_lore, max_length=4000, placeholder="Para uma história maior, use Enviar lore longa (.txt).")
+            self.lore = discord.ui.TextInput(label=t('História do personagem (até 4.000)'), style=discord.TextStyle.paragraph, required=require_lore, max_length=4000, placeholder=t('Para uma história maior, use Enviar lore longa (.txt).'))
             self.add_item(self.lore)
 
     async def on_timeout(self) -> None:
@@ -589,35 +591,35 @@ class LoreUploadDraftView(GuildView):
         if isinstance(self.lore_text, Path):
             self.lore_text.unlink(missing_ok=True)
 
-    @discord.ui.button(label="Preencher dados da WL", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label='Preencher dados da WL', style=discord.ButtonStyle.primary)
     async def continue_form(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         current = self.bot.store.get_ticket(interaction.channel_id)
         if not current or current["status"] != "open" or current["user_id"] != interaction.user.id:
-            await interaction.response.send_message("Este ticket nao esta mais aberto para voce.", ephemeral=True)
+            await interaction.response.send_message(t('Este ticket nao esta mais aberto para voce.'), ephemeral=True)
             return
         config = self.bot.store.get_settings(current["guild_id"])
         if not config["wl"]["enabled"]:
-            await interaction.response.send_message("A criacao de WL esta pausada.", ephemeral=True)
+            await interaction.response.send_message(t('A criacao de WL esta pausada.'), ephemeral=True)
             return
         if config["wl"]["require_lore"] and not config["wl"]["lore_reference"].strip():
-            await interaction.response.send_message("A equipe ainda nao definiu a lore base.", ephemeral=True)
+            await interaction.response.send_message(t('A equipe ainda nao definiu a lore base.'), ephemeral=True)
             return
         lore_text, self.lore_text = self.lore_text, ""
         self.stop()
         await interaction.response.send_modal(WhitelistModal(self.bot, current, config["wl"]["require_lore"], lore_text))
 
 
-class GeminiKeyModal(GuildModal, title="Configurar chave Gemini"):
+class GeminiKeyModal(GuildModal, title='Configurar chave Gemini'):
     def __init__(self, bot: "ManguaduBot", guild_id: int):
         super().__init__()
         self.bot = bot
         self.guild_id = guild_id
         self.api_key = discord.ui.TextInput(
-            label="Chave da API do Google AI Studio",
+            label=t('Chave da API do Google AI Studio'),
             min_length=20,
             max_length=256,
             required=True,
-            placeholder="A chave nao sera exibida pelo bot depois de salva",
+            placeholder=t('A chave nao sera exibida pelo bot depois de salva'),
         )
         self.add_item(self.api_key)
 
@@ -630,7 +632,7 @@ class GeminiKeyModal(GuildModal, title="Configurar chave Gemini"):
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
         await interaction.response.send_message(
-            "Chave Gemini salva criptografada neste bot. Ela nao foi enviada a nenhum canal; use Testar conexao para validar.",
+            t('Chave Gemini salva criptografada neste bot. Ela nao foi enviada a nenhum canal; use Testar conexao para validar.'),
             ephemeral=True,
         )
 
@@ -639,7 +641,7 @@ class GeminiConfigView(AdminView):
     def __init__(self, bot: "ManguaduBot", guild_id: int):
         super().__init__(bot, guild_id)
         self.add_item(discord.ui.Button(
-            label="Criar chave no Google AI Studio",
+            label=t('Criar chave no Google AI Studio'),
             style=discord.ButtonStyle.link,
             url="https://aistudio.google.com/apikey",
         ))
@@ -647,21 +649,19 @@ class GeminiConfigView(AdminView):
     def embed(self) -> discord.Embed:
         configured = self.bot.store.has_gemini_api_key(self.guild_id)
         embed = discord.Embed(
-            title="Configuracao Gemini",
+            title=t('Configuracao Gemini'),
             description=(
-                f"Modelo: `{GEMINI_MODEL}`\nChave: {'configurada' if configured else 'nao configurada'}\n\n"
-                "A chave fica criptografada no armazenamento local do bot. A analise envia somente trechos da lore base e da historia; nao envia senha PZ, ID Discord ou usuario PZ. "
-                "A camada gratuita do Gemini pode usar prompts para melhorar os produtos Google. Configure a IA somente se isso for aceitavel para a comunidade."
+                ''.join((format(t('Modelo: `'), ''), format(GEMINI_MODEL, ''), format(t('`\nChave: '), ''), format('configurada' if configured else t('nao configurada'), ''), format(t('\n\nA chave fica criptografada no armazenamento local do bot. A analise envia somente trechos da lore base e da historia; nao envia senha PZ, ID Discord ou usuario PZ. A camada gratuita do Gemini pode usar prompts para melhorar os produtos Google. Configure a IA somente se isso for aceitavel para a comunidade.'), '')))
             ),
             color=0x4285F4,
         )
         return embed
 
-    @discord.ui.button(label="Configurar / trocar chave", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label='Configurar / trocar chave', style=discord.ButtonStyle.primary)
     async def configure(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.send_modal(GeminiKeyModal(self.bot, self.guild_id))
 
-    @discord.ui.button(label="Testar conexao", style=discord.ButtonStyle.success)
+    @discord.ui.button(label='Testar conexao', style=discord.ButtonStyle.success)
     async def test_connection(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         try:
             api_key = self.bot.store.get_gemini_api_key(self.guild_id)
@@ -669,17 +669,17 @@ class GeminiConfigView(AdminView):
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
         if not api_key:
-            await interaction.response.send_message("Configure a chave Gemini primeiro.", ephemeral=True)
+            await interaction.response.send_message(t('Configure a chave Gemini primeiro.'), ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             await test_gemini_key(api_key)
         except GeminiError as exc:
-            await interaction.followup.send(f"Teste Gemini falhou: {exc}", ephemeral=True)
+            await interaction.followup.send(''.join((format(t('Teste Gemini falhou: '), ''), format(exc, ''))), ephemeral=True)
             return
-        await interaction.followup.send(f"Gemini respondeu pelo modelo `{GEMINI_MODEL}`.", ephemeral=True)
+        await interaction.followup.send(''.join((format(t('Gemini respondeu pelo modelo `'), ''), format(GEMINI_MODEL, ''), '`.')), ephemeral=True)
 
-    @discord.ui.button(label="Remover chave", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label='Remover chave', style=discord.ButtonStyle.danger)
     async def remove_key(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         self.bot.store.clear_gemini_api_key(self.guild_id)
         await interaction.response.edit_message(embed=self.embed(), view=self)
@@ -690,45 +690,45 @@ class ReviewView(GuildView):
         super().__init__(timeout=None)
         self.bot = bot
 
-    @discord.ui.button(label="Aprovar WL", style=discord.ButtonStyle.success, custom_id="manguadu:wl:approve:v1")
+    @discord.ui.button(label='Aprovar WL', style=discord.ButtonStyle.success, custom_id="manguadu:wl:approve:v1")
     async def approve(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await _admin_guard(interaction, self.bot.store):
             return
         config = self.bot.store.get_settings(interaction.guild.id)
         if not _configured_text_channel(interaction.guild, config["channels"]["wl_decisions"]):
-            await interaction.response.send_message("Configure o canal de decisões da WL antes de aprovar.", ephemeral=True)
+            await interaction.response.send_message(t('Configure o canal de decisões da WL antes de aprovar.'), ephemeral=True)
             return
         previous = self.bot.store.get_request(interaction.channel_id)
         await interaction.response.defer(ephemeral=True)
         message = await self.bot.issue_whitelist(interaction.channel, interaction.channel_id)
         request = self.bot.store.get_request(interaction.channel_id)
         if request and previous and previous["status"] in ("pending", "review", "failed"):
-            await self.bot.post_audit(interaction.guild, request, "Aprovada pela equipe" if request["status"] == "approved" else "Falha na aprovação manual", message)
+            await self.bot.post_audit(interaction.guild, request, t('Aprovada pela equipe') if request["status"] == "approved" else t('Falha na aprovação manual'), message)
             if request["status"] == "approved":
-                await self.bot.post_decision(interaction.guild, request, True, "A equipe analisou a história do personagem e aprovou a whitelist.")
+                await self.bot.post_decision(interaction.guild, request, True, t('A equipe analisou a história do personagem e aprovou a whitelist.'))
         await interaction.followup.send(message, ephemeral=True)
 
-    @discord.ui.button(label="Reprovar WL", style=discord.ButtonStyle.danger, custom_id="manguadu:wl:reject:v1")
+    @discord.ui.button(label='Reprovar WL', style=discord.ButtonStyle.danger, custom_id="manguadu:wl:reject:v1")
     async def reject(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         if not await _admin_guard(interaction, self.bot.store):
             return
         config = self.bot.store.get_settings(interaction.guild.id)
         if not _configured_text_channel(interaction.guild, config["channels"]["wl_decisions"]):
-            await interaction.response.send_message("Configure o canal de decisões da WL antes de reprovar.", ephemeral=True)
+            await interaction.response.send_message(t('Configure o canal de decisões da WL antes de reprovar.'), ephemeral=True)
             return
         request = self.bot.store.get_request(interaction.channel_id)
         if not request or request["status"] not in ("review", "failed"):
-            await interaction.response.send_message("Este pedido já foi concluído ou não existe.", ephemeral=True)
+            await interaction.response.send_message(t('Este pedido já foi concluído ou não existe.'), ephemeral=True)
             return
         await interaction.response.send_modal(RejectReasonModal(self.bot, interaction.channel_id))
 
 
-class RejectReasonModal(GuildModal, title="Motivo da reprovação"):
+class RejectReasonModal(GuildModal, title='Motivo da reprovação'):
     def __init__(self, bot: "ManguaduBot", channel_id: int):
         super().__init__()
         self.bot = bot
         self.channel_id = channel_id
-        self.reason = discord.ui.TextInput(label="Explique ao jogador por que a WL foi recusada", style=discord.TextStyle.paragraph, min_length=10, max_length=500)
+        self.reason = discord.ui.TextInput(label=t('Explique ao jogador por que a WL foi recusada'), style=discord.TextStyle.paragraph, min_length=10, max_length=500)
         self.add_item(self.reason)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
@@ -736,19 +736,19 @@ class RejectReasonModal(GuildModal, title="Motivo da reprovação"):
             return
         request = self.bot.store.get_request(self.channel_id)
         if not request or request["status"] not in ("review", "failed"):
-            await interaction.response.send_message("Este pedido já foi concluído.", ephemeral=True)
+            await interaction.response.send_message(t('Este pedido já foi concluído.'), ephemeral=True)
             return
         reason = str(self.reason.value).strip()
         self.bot.store.set_request_status(self.channel_id, "rejected")
         self.bot.store.clear_request_password(self.channel_id)
         config = self.bot.store.get_settings(interaction.guild.id)
         lore_id = config["channels"]["lore"]
-        lore_link = f" Leia a lore em <#{lore_id}> e envie outro pedido." if lore_id else " Consulte a lore oficial e envie outro pedido."
-        await interaction.response.send_message("WL reprovada e motivo enviado.", ephemeral=True)
-        await interaction.channel.send(f"<@{request['user_id']}>, sua WL foi reprovada. Motivo: {reason}.{lore_link}", allowed_mentions=discord.AllowedMentions(users=True))
+        lore_link = ''.join((format(t(' Leia a lore em <#'), ''), format(lore_id, ''), format(t('> e envie outro pedido.'), ''))) if lore_id else t(' Consulte a lore oficial e envie outro pedido.')
+        await interaction.response.send_message(t('WL reprovada e motivo enviado.'), ephemeral=True)
+        await interaction.channel.send(''.join(('<@', format(request['user_id'], ''), format(t('>, sua WL foi reprovada. Motivo: '), ''), format(reason, ''), '.', format(lore_link, ''))), allowed_mentions=discord.AllowedMentions(users=True))
         updated = self.bot.store.get_request(self.channel_id)
         await self.bot.post_decision(interaction.guild, updated, False, reason)
-        await self.bot.post_audit(interaction.guild, updated, "Reprovada pela equipe", reason)
+        await self.bot.post_audit(interaction.guild, updated, t('Reprovada pela equipe'), reason)
 
 
 class ManguaduBot(discord.Client):
@@ -756,7 +756,9 @@ class ManguaduBot(discord.Client):
         if guild_id is None:
             return None
         runtime = self._runtimes.get(guild_id)
-        return runtime.scope if runtime else GuildScope(guild_id)
+        scope = runtime.scope if runtime else GuildScope(guild_id)
+        scope.language = self.store.get_language(guild_id)
+        return scope
 
     def activate_guild(self, guild_id: int | None) -> GuildScope | None:
         scope = self.scope_for(guild_id)
@@ -766,10 +768,16 @@ class ManguaduBot(discord.Client):
     async def install_binding(self, guild_id: int, binding: dict) -> None:
         previous = self.store.get_binding(guild_id)
         if previous and previous["uuid"] != binding["uuid"]:
-            raise ValueError("Este Discord ja tem outro volume vinculado. O operador deve migrar o vinculo e os pedidos pendentes antes de trocar de servidor.")
+            raise ValueError(t('Este Discord ja tem outro volume vinculado. O operador deve migrar o vinculo e os pedidos pendentes antes de trocar de servidor.'))
         if previous:
             binding = {**previous, **binding}
+        old_runtime = self._runtimes.get(guild_id)
         runtime = await asyncio.to_thread(GuildRuntime, self, guild_id, binding)
+        if old_runtime and old_runtime.scope.environment.get("LOGS_PATH") == runtime.scope.environment.get("LOGS_PATH"):
+            # Configuration changes must not skip queued log lines by reseeding
+            # a watcher at EOF. Keep its cursors and lock for the same volume.
+            runtime.watcher = old_runtime.watcher
+            runtime.watcher_lock = old_runtime.watcher_lock
         self.store.save_binding(guild_id, binding)
         self.work_queue.remove_prefix(f"{guild_id}:")
         self.log_queue.remove_prefix(f"{guild_id}:")
@@ -787,7 +795,7 @@ class ManguaduBot(discord.Client):
                     return PzData(None)
                 if attribute == "online_since":
                     return {}
-                raise RuntimeError("Servidor deste Discord ainda nao foi vinculado em /config.")
+                raise RuntimeError(t('Servidor deste Discord ainda nao foi vinculado em /config.'))
             return getattr(scope.runtime, attribute)
         return getattr(self, fallback)
 
@@ -845,6 +853,7 @@ class ManguaduBot(discord.Client):
                         self._clear_kick_auto_state(guild_id)
                     return
                 with use_scope(runtime.scope):
+                    runtime.scope.language = self.store.get_language(guild_id)
                     if kind == "panels":
                         await self.refresh_panels()
                     elif kind in {"logs", "data"}:
@@ -863,7 +872,7 @@ class ManguaduBot(discord.Client):
                         await runtime.automations.run_due(self._notify_updater)
                     elif kind == "kick":
                         if not await self._scan_kick_auto_guild(guild):
-                            raise TransientJobError("fiscalizacao de voz indisponivel neste servidor")
+                            raise TransientJobError(t('fiscalizacao de voz indisponivel neste servidor'))
             target_queue = self.log_queue if kind == "logs" else self.work_queue
             target_queue.add(f"{guild_id}:{kind}", interval, callback, timeout=timeout)
 
@@ -910,7 +919,16 @@ class ManguaduBot(discord.Client):
         self._anticheat_task: asyncio.Task | None = None
         self._watcher_task: asyncio.Task | None = None
 
-        @self.tree.command(name="config", description="Vincula este Discord ao servidor PZ e configura o bot")
+        @self.tree.command(name="language", description=t('Escolhe português ou inglês para esta comunidade'))
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.guild_only()
+        async def language_settings(interaction: discord.Interaction) -> None:
+            if not await _admin_guard(interaction, self.store):
+                return
+            fresh = LanguageView(self, interaction.guild.id)
+            await interaction.response.send_message(embed=fresh.embed(), view=fresh, ephemeral=True)
+
+        @self.tree.command(name="config", description=t('Vincula este Discord ao servidor PZ e configura o bot'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def config_server(interaction: discord.Interaction) -> None:
@@ -919,13 +937,13 @@ class ManguaduBot(discord.Client):
             view = ServerConfigView(self, interaction.guild.id)
             await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
 
-        @self.tree.command(name="condig", description="Abre a configuração do servidor PZ deste Discord")
+        @self.tree.command(name="condig", description=t('Abre a configuração do servidor PZ deste Discord'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def config_alias(interaction: discord.Interaction) -> None:
             await config_server.callback(interaction)
 
-        @self.tree.command(name="config_bot", description="Configura canais, tickets e whitelist do HTS Bot Multi servers")
+        @self.tree.command(name="config_bot", description=t('Configura canais, tickets e whitelist do HTS Bot Multi servers'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def config_bot(interaction: discord.Interaction) -> None:
@@ -934,7 +952,7 @@ class ManguaduBot(discord.Client):
             config = self.store.get_settings(interaction.guild.id)
             await interaction.response.send_message(embed=_home_embed(config), view=ConfigHomeView(self, interaction.guild.id), ephemeral=True)
 
-        @self.tree.command(name="config_api", description="Configura com privacidade a chave Gemini usada na analise de lore")
+        @self.tree.command(name="config_api", description=t('Configura com privacidade a chave Gemini usada na analise de lore'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def config_api(interaction: discord.Interaction) -> None:
@@ -943,7 +961,7 @@ class ManguaduBot(discord.Client):
             view = GeminiConfigView(self, interaction.guild.id)
             await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
 
-        @self.tree.command(name="config_kick_automatico", description="Configura a presença obrigatória na call de voz do RP")
+        @self.tree.command(name="config_kick_automatico", description=t('Configura a presença obrigatória na call de voz do RP'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def config_kick_automatico(interaction: discord.Interaction) -> None:
@@ -952,8 +970,8 @@ class ManguaduBot(discord.Client):
             view = KickAutoConfigView(self, interaction.guild.id)
             await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
 
-        @self.tree.command(name="config_lore", description="Importa lore base em arquivo .txt (ate 9.999.999 caracteres)")
-        @app_commands.describe(arquivo="Arquivo UTF-8 .txt com a lore oficial; use em canal privado da equipe")
+        @self.tree.command(name="config_lore", description=t('Importa lore base em arquivo .txt (ate 9.999.999 caracteres)'))
+        @app_commands.describe(arquivo=t('Arquivo UTF-8 .txt com a lore oficial; use em canal privado da equipe'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def config_lore(interaction: discord.Interaction, arquivo: discord.Attachment) -> None:
@@ -966,7 +984,7 @@ class ManguaduBot(discord.Client):
                     await interaction.followup.send(error, ephemeral=True)
                     return
                 if len(content) < 80:
-                    await interaction.followup.send("A lore base precisa ter pelo menos 80 caracteres.", ephemeral=True)
+                    await interaction.followup.send(t('A lore base precisa ter pelo menos 80 caracteres.'), ephemeral=True)
                     return
                 try:
                     await asyncio.to_thread(self.store.set_value, interaction.guild.id, "wl", "lore_reference", content)
@@ -975,30 +993,30 @@ class ManguaduBot(discord.Client):
                     return
                 compressed_bytes = len(content.encode("utf-8"))
                 await interaction.followup.send(
-                    f"Lore base salva: {len(content):,} caracteres. Armazenamento SQLite comprimido (arquivo original: {compressed_bytes:,} bytes).",
+                    ''.join((format(t('Lore base salva: '), ''), format(len(content), ''.join((',',))), format(t(' caracteres. Armazenamento SQLite comprimido (arquivo original: '), ''), format(compressed_bytes, ''.join((',',))), ' bytes).')),
                     ephemeral=True,
                 )
 
-        wl_group = app_commands.Group(name="wl", description="Envia uma candidatura de whitelist neste ticket")
+        wl_group = app_commands.Group(name="wl", description=t('Envia uma candidatura de whitelist neste ticket'))
 
-        @wl_group.command(name="lore", description="Anexa lore longa em .txt e abre o formulario privado da WL")
-        @app_commands.describe(arquivo="Arquivo UTF-8 .txt com a historia do personagem")
+        @wl_group.command(name="lore", description=t('Anexa lore longa em .txt e abre o formulario privado da WL'))
+        @app_commands.describe(arquivo=t('Arquivo UTF-8 .txt com a historia do personagem'))
         @app_commands.guild_only()
         async def wl_lore_file(interaction: discord.Interaction, arquivo: discord.Attachment) -> None:
             ticket = self.store.get_ticket(interaction.channel_id)
             if not ticket or ticket["status"] != "open" or ticket["user_id"] != interaction.user.id:
-                await interaction.response.send_message("Use este comando no ticket aberto por voce.", ephemeral=True)
+                await interaction.response.send_message(t('Use este comando no ticket aberto por voce.'), ephemeral=True)
                 return
             config = self.store.get_settings(ticket["guild_id"])
             if not config["wl"]["enabled"]:
-                await interaction.response.send_message("A criacao de WL esta pausada.", ephemeral=True)
+                await interaction.response.send_message(t('A criacao de WL esta pausada.'), ephemeral=True)
                 return
             if config["wl"]["require_lore"] and not config["wl"]["lore_reference"].strip():
-                await interaction.response.send_message("A equipe ainda nao definiu a lore base.", ephemeral=True)
+                await interaction.response.send_message(t('A equipe ainda nao definiu a lore base.'), ephemeral=True)
                 return
             existing = self.store.get_request(ticket["channel_id"])
             if existing and existing["status"] in ("review", "processing", "approved"):
-                await interaction.response.send_message("Ja existe um pedido de WL em andamento neste ticket.", ephemeral=True)
+                await interaction.response.send_message(t('Ja existe um pedido de WL em andamento neste ticket.'), ephemeral=True)
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
             async with self._large_io_slots:
@@ -1007,16 +1025,16 @@ class ManguaduBot(discord.Client):
                     await interaction.followup.send(error, ephemeral=True)
                     return
                 if len(content) < 120:
-                    await interaction.followup.send("A historia do personagem precisa ter pelo menos 120 caracteres.", ephemeral=True)
+                    await interaction.followup.send(t('A historia do personagem precisa ter pelo menos 120 caracteres.'), ephemeral=True)
                     return
                 await interaction.followup.send(
-                    f"Arquivo recebido ({len(content):,} caracteres). Clique para preencher seus dados no formulario privado.",
+                    ''.join((format(t('Arquivo recebido ('), ''), format(len(content), ''.join((',',))), format(t(' caracteres). Clique para preencher seus dados no formulario privado.'), ''))),
                     view=LoreUploadDraftView(self, ticket, await asyncio.to_thread(save_draft, content)),
                     ephemeral=True,
                 )
 
-        @wl_group.command(name="puxar_lore", description="Baixa a lore mais recente enviada por um jogador PZ")
-        @app_commands.describe(jogador="Nome exato do usuário PZ informado na WL")
+        @wl_group.command(name="puxar_lore", description=t('Baixa a lore mais recente enviada por um jogador PZ'))
+        @app_commands.describe(jogador=t('Nome exato do usuário PZ informado na WL'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def wl_pull_lore(interaction: discord.Interaction, jogador: str) -> None:
@@ -1030,25 +1048,24 @@ class ManguaduBot(discord.Client):
                     jogador,
                 )
                 if not request:
-                    await interaction.followup.send(f"Não encontrei uma WL para o usuário PZ `{discord.utils.escape_markdown(jogador)}` neste servidor.", ephemeral=True)
+                    await interaction.followup.send(''.join((format(t('Não encontrei uma WL para o usuário PZ `'), ''), format(discord.utils.escape_markdown(jogador), ''), format(t('` neste servidor.'), ''))), ephemeral=True)
                     return
                 lore = request.get("lore", "")
                 if not lore:
-                    await interaction.followup.send("Esse pedido não contém uma lore para baixar.", ephemeral=True)
+                    await interaction.followup.send(t('Esse pedido não contém uma lore para baixar.'), ephemeral=True)
                     return
                 try:
                     files = await asyncio.to_thread(_make_lore_files, lore, request["username"], interaction.guild.filesize_limit)
                 except ValueError as exc:
                     await interaction.followup.send(str(exc), ephemeral=True)
                     return
-                status = clean_text(request.get("status", "desconhecido"))
+                status = clean_text(request.get("status", t('desconhecido')))
                 message = (
-                    f"Lore mais recente de `{discord.utils.escape_markdown(request['username'])}` "
-                    f"(pedido: **{discord.utils.escape_markdown(status)}**)."
+                    ''.join((format(t('Lore mais recente de `'), ''), format(discord.utils.escape_markdown(request['username']), ''), format(t('` (pedido: **'), ''), format(discord.utils.escape_markdown(status), ''), '**).'))
                 )
                 try:
                     for index, file in enumerate(files, start=1):
-                        content = message if index == 1 else f"Continuação da lore: parte {index} de {len(files)}."
+                        content = message if index == 1 else ''.join((format(t('Continuação da lore: parte '), ''), format(index, ''), format(t(' de '), ''), format(len(files), ''), '.'))
                         await interaction.followup.send(
                             content=content,
                             file=file,
@@ -1060,15 +1077,15 @@ class ManguaduBot(discord.Client):
                         file.close()
                     logger.exception("Falha ao entregar a lore de %s pela interacao WL", request["username"])
                     await interaction.followup.send(
-                        "O Discord recusou o anexo. Confira o limite de upload deste servidor e tente novamente.",
+                        t('O Discord recusou o anexo. Confira o limite de upload deste servidor e tente novamente.'),
                         ephemeral=True,
                     )
 
         self.tree.add_command(wl_group)
 
-        bot_commands = app_commands.Group(name="bot", description="Atualizacao e manutencao do bot")
+        bot_commands = app_commands.Group(name="bot", description=t('Atualizacao e manutencao do bot'))
 
-        @bot_commands.command(name="status", description="Mostra o estado da atualizacao do bot")
+        @bot_commands.command(name="status", description=t('Mostra o estado da atualizacao do bot'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def bot_status(interaction: discord.Interaction) -> None:
@@ -1076,19 +1093,19 @@ class ManguaduBot(discord.Client):
                 return
             status = self.updater.status()
             lines = [
-                f"Projeto: {status['projectRoot']}",
-                f"Atualizador Python: {'encontrado' if status['scriptExists'] else 'ausente'}",
+                ''.join((format(t('Projeto: '), ''), format(status['projectRoot'], ''))),
+                ''.join((format(t('Atualizador Python: '), ''), format('encontrado' if status['scriptExists'] else 'ausente', ''))),
                 f"PM2 app: {status['pm2AppName']}",
                 f"Runtime PM2: {status['pm2Runtime']}",
                 f"Timeout: {status['timeoutSeconds']}s",
-                f"Auto-update: {'ativo' if status['autoUpdateEnabled'] else 'desativado'}",
-                f"Intervalo: {round(status['autoUpdateIntervalMs'] / 1000)}s",
-                f"GitHub privado: {'token configurado' if status['gitHubAuthConfigured'] else 'sem token (adequado para repositorio publico)'}",
+                ''.join((format(t('Auto-update: '), ''), format('ativo' if status['autoUpdateEnabled'] else t('desativado'), ''))),
+                ''.join((format(t('Intervalo: '), ''), format(round(status['autoUpdateIntervalMs'] / 1000), ''), 's')),
+                ''.join((format(t('GitHub privado: '), ''), format(t('token configurado') if status['gitHubAuthConfigured'] else t('sem token (adequado para repositorio publico)'), ''))),
                 f"Log: {status['logFile']}",
             ]
             await interaction.response.send_message("```\n" + "\n".join(lines)[:1850] + "\n```", ephemeral=True)
 
-        @bot_commands.command(name="logatualizacao", description="Mostra o log recente de atualizacao")
+        @bot_commands.command(name="logatualizacao", description=t('Mostra o log recente de atualizacao'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def bot_update_log(interaction: discord.Interaction) -> None:
@@ -1096,80 +1113,80 @@ class ManguaduBot(discord.Client):
                 return
             await interaction.response.send_message("```\n" + self.updater.read_last_log(1800) + "\n```", ephemeral=True)
 
-        @bot_commands.command(name="atualizar", description="Baixa a versao Python e reinicia o processo PM2")
+        @bot_commands.command(name="atualizar", description=t('Baixa a versao Python e reinicia o processo PM2'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def bot_update(interaction: discord.Interaction) -> None:
             if not await self._updater_admin_guard(interaction):
                 return
             if not self.updater.python_runtime_configured:
-                await interaction.response.send_message("O processo PM2 precisa executar `python -m manguadu --bot` e ter `BOT_PM2_RUNTIME=python` no .env antes de atualizar.", ephemeral=True)
+                await interaction.response.send_message(t('O processo PM2 precisa executar `python -m manguadu --bot` e ter `BOT_PM2_RUNTIME=python` no .env antes de atualizar.'), ephemeral=True)
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
             result = await self.updater.update(skip_restart=True)
             if not result["ok"]:
                 details = "\n".join(part for part in (result.get("error"), result.get("output")) if part)
-                await interaction.followup.send("Atualizacao falhou.\n```\n" + details[:1800] + "\n```", ephemeral=True)
+                await interaction.followup.send(t('Atualizacao falhou.\n```\n') + details[:1800] + "\n```", ephemeral=True)
                 return
-            await interaction.followup.send("Atualizacao Python concluida. Reiniciando o bot em alguns segundos.\n```\n" + result["output"][:1500] + "\n```", ephemeral=True)
+            await interaction.followup.send(t('Atualizacao Python concluida. Reiniciando o bot em alguns segundos.\n```\n') + result["output"][:1500] + "\n```", ephemeral=True)
             asyncio.create_task(self._restart_pm2())
 
         self.tree.add_command(bot_commands)
 
-        panel_group = app_commands.Group(name="painel", description="Controla e personaliza os paineis do servidor")
-        panel_config_group = app_commands.Group(name="config", description="Personaliza o tema dos paineis")
-        panel_players_group = app_commands.Group(name="jogadores", description="Vincula nomes PZ a membros Discord")
+        panel_group = app_commands.Group(name="painel", description=t('Controla e personaliza os paineis do servidor'))
+        panel_config_group = app_commands.Group(name="config", description=t('Personaliza o tema dos paineis'))
+        panel_players_group = app_commands.Group(name="jogadores", description=t('Vincula nomes PZ a membros Discord'))
 
-        @panel_config_group.command(name="banner", description="Define o banner do painel de status")
-        @app_commands.describe(arquivo="Imagem, GIF ou vídeo", url="URL de imagem, GIF ou YouTube")
+        @panel_config_group.command(name="banner", description=t('Define o banner do painel de status'))
+        @app_commands.describe(arquivo=t('Imagem, GIF ou vídeo'), url=t('URL de imagem, GIF ou YouTube'))
         @app_commands.default_permissions(administrator=True)
         async def panel_banner(interaction: discord.Interaction, arquivo: discord.Attachment | None = None, url: str | None = None) -> None:
             await self._panel_media_config(interaction, "banner", arquivo, url)
 
-        @panel_config_group.command(name="thumbnail", description="Define o logo lateral dos paineis")
-        @app_commands.describe(arquivo="Imagem, GIF ou vídeo", url="URL de imagem, GIF ou YouTube")
+        @panel_config_group.command(name="thumbnail", description=t('Define o logo lateral dos paineis'))
+        @app_commands.describe(arquivo=t('Imagem, GIF ou vídeo'), url=t('URL de imagem, GIF ou YouTube'))
         @app_commands.default_permissions(administrator=True)
         async def panel_thumbnail(interaction: discord.Interaction, arquivo: discord.Attachment | None = None, url: str | None = None) -> None:
             await self._panel_media_config(interaction, "thumbnail", arquivo, url)
 
-        @panel_config_group.command(name="cor", description="Define a cor principal dos paineis")
-        @app_commands.describe(hex="Cor hexadecimal, exemplo #28D17C")
+        @panel_config_group.command(name="cor", description=t('Define a cor principal dos paineis'))
+        @app_commands.describe(hex=t('Cor hexadecimal, exemplo #28D17C'))
         @app_commands.default_permissions(administrator=True)
         async def panel_primary_color(interaction: discord.Interaction, hex: str) -> None:
             await self._panel_text_config(interaction, "primaryColor", hex, is_color=True)
 
-        @panel_config_group.command(name="cor-secundaria", description="Define a cor complementar dos paineis")
-        @app_commands.describe(hex="Cor hexadecimal, exemplo #F0A93B")
+        @panel_config_group.command(name="cor-secundaria", description=t('Define a cor complementar dos paineis'))
+        @app_commands.describe(hex=t('Cor hexadecimal, exemplo #F0A93B'))
         @app_commands.default_permissions(administrator=True)
         async def panel_secondary_color(interaction: discord.Interaction, hex: str) -> None:
             await self._panel_text_config(interaction, "secondaryColor", hex, is_color=True)
 
-        @panel_config_group.command(name="titulo", description="Altera o titulo principal")
-        @app_commands.describe(texto="Titulo do servidor")
+        @panel_config_group.command(name="titulo", description=t('Altera o titulo principal'))
+        @app_commands.describe(texto=t('Titulo do servidor'))
         @app_commands.default_permissions(administrator=True)
         async def panel_title(interaction: discord.Interaction, texto: app_commands.Range[str, 1, 100]) -> None:
             await self._panel_text_config(interaction, "title", texto)
 
-        @panel_config_group.command(name="descricao", description="Altera a descricao principal")
-        @app_commands.describe(texto="Descricao da comunidade")
+        @panel_config_group.command(name="descricao", description=t('Altera a descricao principal'))
+        @app_commands.describe(texto=t('Descricao da comunidade'))
         @app_commands.default_permissions(administrator=True)
         async def panel_description(interaction: discord.Interaction, texto: app_commands.Range[str, 1, 500]) -> None:
             await self._panel_text_config(interaction, "description", texto)
 
-        @panel_config_group.command(name="fundo-ranking", description="Define a imagem principal do ranking")
-        @app_commands.describe(arquivo="Imagem, GIF ou vídeo", url="URL de imagem, GIF ou YouTube; use limpar para remover")
+        @panel_config_group.command(name="fundo-ranking", description=t('Define a imagem principal do ranking'))
+        @app_commands.describe(arquivo=t('Imagem, GIF ou vídeo'), url=t('URL de imagem, GIF ou YouTube; use limpar para remover'))
         @app_commands.default_permissions(administrator=True)
         async def panel_ranking_background(interaction: discord.Interaction, arquivo: discord.Attachment | None = None, url: str | None = None) -> None:
             await self._panel_media_config(interaction, "rankingBackground", arquivo, url)
 
-        @panel_players_group.command(name="vincular", description="Vincula um nick PZ a um membro Discord")
-        @app_commands.describe(jogador="Nick do jogador", membro="Membro do Discord")
+        @panel_players_group.command(name="vincular", description=t('Vincula um nick PZ a um membro Discord'))
+        @app_commands.describe(jogador=t('Nick do jogador'), membro=t('Membro do Discord'))
         @app_commands.default_permissions(administrator=True)
         async def panel_link_player(interaction: discord.Interaction, jogador: str, membro: discord.Member) -> None:
             await self._panel_link_player(interaction, jogador, membro.id)
 
-        @panel_players_group.command(name="desvincular", description="Remove o vinculo Discord de um jogador")
-        @app_commands.describe(jogador="Nick do jogador")
+        @panel_players_group.command(name="desvincular", description=t('Remove o vinculo Discord de um jogador'))
+        @app_commands.describe(jogador=t('Nick do jogador'))
         @app_commands.default_permissions(administrator=True)
         async def panel_unlink_player(interaction: discord.Interaction, jogador: str) -> None:
             await self._panel_unlink_player(interaction, jogador)
@@ -1177,38 +1194,38 @@ class ManguaduBot(discord.Client):
         panel_group.add_command(panel_config_group)
         panel_group.add_command(panel_players_group)
 
-        @panel_group.command(name="restart", description="Reinicia o servidor")
+        @panel_group.command(name="restart", description=t('Reinicia o servidor'))
         @app_commands.default_permissions(administrator=True)
         async def panel_restart(interaction: discord.Interaction) -> None:
             await self._panel_power(interaction, "restart")
 
-        @panel_group.command(name="stop", description="Para o servidor")
+        @panel_group.command(name="stop", description=t('Para o servidor'))
         @app_commands.default_permissions(administrator=True)
         async def panel_stop(interaction: discord.Interaction) -> None:
             await self._panel_power(interaction, "stop")
 
-        @panel_group.command(name="recursos", description="Mostra CPU, RAM, disco e estado")
+        @panel_group.command(name="recursos", description=t('Mostra CPU, RAM, disco e estado'))
         @app_commands.default_permissions(administrator=True)
         async def panel_resources(interaction: discord.Interaction) -> None:
             await self._panel_resources(interaction)
 
-        @panel_group.command(name="preview", description="Mostra o rascunho antes de salvar")
+        @panel_group.command(name="preview", description=t('Mostra o rascunho antes de salvar'))
         @app_commands.choices(tipo=[app_commands.Choice(name="Servidor", value="status"), app_commands.Choice(name="Ranking", value="ranking")])
         @app_commands.default_permissions(administrator=True)
         async def panel_preview(interaction: discord.Interaction, tipo: app_commands.Choice[str] | None = None) -> None:
             await self._panel_preview(interaction, tipo.value if tipo else "status")
 
-        @panel_group.command(name="salvar", description="Publica o tema em rascunho")
+        @panel_group.command(name="salvar", description=t('Publica o tema em rascunho'))
         @app_commands.default_permissions(administrator=True)
         async def panel_save(interaction: discord.Interaction) -> None:
             await self._panel_save(interaction)
 
         self.tree.add_command(panel_group)
 
-        automation_group = app_commands.Group(name="automacao", description="Cria e gerencia rotinas do servidor PZ")
+        automation_group = app_commands.Group(name="automacao", description=t('Cria e gerencia rotinas do servidor PZ'))
 
-        @automation_group.command(name="criar", description="Cria uma automação diária ou em dias específicos")
-        @app_commands.describe(tipo="O que o bot deve executar", horario="Horário no formato HH:MM", dias="todos, úteis, fds ou números: 1=domingo ... 7=sábado", manter_backups="Backups automáticos para manter", comando="Obrigatório se tipo = comando")
+        @automation_group.command(name="criar", description=t('Cria uma automação diária ou em dias específicos'))
+        @app_commands.describe(tipo=t('O que o bot deve executar'), horario=t('Horário no formato HH:MM'), dias=t('todos, úteis, fds ou números: 1=domingo ... 7=sábado'), manter_backups=t('Backups automáticos para manter'), comando=t('Obrigatório se tipo = comando'))
         @app_commands.choices(tipo=[
             app_commands.Choice(name="Ligar servidor", value="start"), app_commands.Choice(name="Desligar servidor", value="stop"),
             app_commands.Choice(name="Reiniciar servidor", value="restart"), app_commands.Choice(name="Criar backup", value="backup"),
@@ -1221,46 +1238,46 @@ class ManguaduBot(discord.Client):
             if not result["ok"]:
                 await interaction.response.send_message(result["error"], ephemeral=True)
                 return
-            await interaction.response.send_message("Automação criada.\n" + self.automations.format_line(result["automation"]), ephemeral=True)
+            await interaction.response.send_message(t('Automação criada.\n') + self.automations.format_line(result["automation"]), ephemeral=True)
 
-        @automation_group.command(name="listar", description="Lista as automações criadas")
+        @automation_group.command(name="listar", description=t('Lista as automações criadas'))
         @app_commands.default_permissions(administrator=True)
         async def list_automations(interaction: discord.Interaction) -> None:
             if not await _admin_guard(interaction, self.store): return
             runtime = self.automations.runtime_status()
-            header = f"Timezone: {get_timezone()}\nAgora: {runtime['dateKey']} {runtime['timeKey']} ({runtime['weekdayLabel']})\nJanela: {runtime['graceMinutes']} minuto(s)\nArquivo: {runtime['storeFile']}"
+            header = ''.join(('Timezone: ', format(get_timezone(), ''), format(t('\nAgora: '), ''), format(runtime['dateKey'], ''), ' ', format(runtime['timeKey'], ''), ' (', format(runtime['weekdayLabel'], ''), format(t(')\nJanela: '), ''), format(runtime['graceMinutes'], ''), format(t(' minuto(s)\nArquivo: '), ''), format(runtime['storeFile'], '')))
             await interaction.response.send_message((header + "\n" + self.automations.format_list())[:1900], ephemeral=True)
 
-        @automation_group.command(name="remover", description="Remove uma automação")
-        @app_commands.describe(id="ID da automação")
+        @automation_group.command(name="remover", description=t('Remove uma automação'))
+        @app_commands.describe(id=t('ID da automação'))
         @app_commands.default_permissions(administrator=True)
         async def remove_automation(interaction: discord.Interaction, id: str) -> None:
             if not await _admin_guard(interaction, self.store): return
-            await interaction.response.send_message("Automação removida." if self.automations.remove(id) else "Automação não encontrada.", ephemeral=True)
+            await interaction.response.send_message(t('Automação removida.') if self.automations.remove(id) else t('Automação não encontrada.'), ephemeral=True)
 
-        @automation_group.command(name="pausar", description="Pausa uma automação sem apagar")
-        @app_commands.describe(id="ID da automação")
+        @automation_group.command(name="pausar", description=t('Pausa uma automação sem apagar'))
+        @app_commands.describe(id=t('ID da automação'))
         @app_commands.default_permissions(administrator=True)
         async def pause_automation(interaction: discord.Interaction, id: str) -> None:
             await self._set_automation(interaction, id, False)
 
-        @automation_group.command(name="retomar", description="Reativa uma automação pausada")
-        @app_commands.describe(id="ID da automação")
+        @automation_group.command(name="retomar", description=t('Reativa uma automação pausada'))
+        @app_commands.describe(id=t('ID da automação'))
         @app_commands.default_permissions(administrator=True)
         async def resume_automation(interaction: discord.Interaction, id: str) -> None:
             await self._set_automation(interaction, id, True)
 
-        @automation_group.command(name="executar", description="Executa uma automação agora")
-        @app_commands.describe(id="ID da automação")
+        @automation_group.command(name="executar", description=t('Executa uma automação agora'))
+        @app_commands.describe(id=t('ID da automação'))
         @app_commands.default_permissions(administrator=True)
         async def execute_automation(interaction: discord.Interaction, id: str) -> None:
             if not await _admin_guard(interaction, self.store): return
             await interaction.response.defer(ephemeral=True, thinking=True)
             result = await self.automations.run_now(id)
-            await interaction.followup.send(("Automação executada.\n" if result.get("ok") else "Falha na automação.\n") + (result.get("message") or result.get("error", "Sem detalhes.")), ephemeral=True)
+            await interaction.followup.send((t('Automação executada.\n') if result.get("ok") else t('Falha na automação.\n')) + (result.get("message") or result.get("error", t('Sem detalhes.'))), ephemeral=True)
 
-        @automation_group.command(name="backupagora", description="Cria um backup agora e limpa backups automáticos antigos")
-        @app_commands.describe(manter_backups="Backups automáticos para manter")
+        @automation_group.command(name="backupagora", description=t('Cria um backup agora e limpa backups automáticos antigos'))
+        @app_commands.describe(manter_backups=t('Backups automáticos para manter'))
         @app_commands.default_permissions(administrator=True)
         async def backup_now(interaction: discord.Interaction, manter_backups: app_commands.Range[int, 1, 50] | None = None) -> None:
             if not await _admin_guard(interaction, self.store): return
@@ -1270,116 +1287,128 @@ class ManguaduBot(discord.Client):
 
         self.tree.add_command(automation_group)
 
-        @self.tree.command(name="online", description="Lista jogadores online registrados pelo FriendHost")
+        @self.tree.command(name="online", description=t('Lista jogadores online registrados pelo FriendHost'))
         @app_commands.guild_only()
         async def online(interaction: discord.Interaction) -> None:
             names = await asyncio.to_thread(self.pz_data.online_players)
-            description = "\n".join(f"{index}. {discord.utils.escape_markdown(name)}" for index, name in enumerate(names, 1)) or "Nenhum jogador online."
-            embed = discord.Embed(title=f"Jogadores online: {len(names)}", description=description[:4000], color=0x2ECC71 if names else 0xE74C3C, timestamp=discord.utils.utcnow())
+            description = "\n".join(f"{index}. {discord.utils.escape_markdown(name)}" for index, name in enumerate(names, 1)) or t('Nenhum jogador online.')
+            embed = discord.Embed(title=''.join((format(t('Jogadores online: '), ''), format(len(names), ''))), description=description[:4000], color=0x2ECC71 if names else 0xE74C3C, timestamp=discord.utils.utcnow())
             await interaction.response.send_message(embed=embed)
 
-        @self.tree.command(name="info", description="Exibe informacoes de um jogador")
-        @app_commands.describe(jogador="Nick do jogador")
+        @self.tree.command(name="info", description=t('Exibe informacoes de um jogador'))
+        @app_commands.describe(jogador=t('Nick do jogador'))
         @app_commands.guild_only()
         async def player_info(interaction: discord.Interaction, jogador: str) -> None:
+            await interaction.response.defer(thinking=True)
             entry = await asyncio.to_thread(self.pz_data.find_player, jogador)
             if not entry:
-                await interaction.response.send_message("Jogador não encontrado nos dados do servidor.", ephemeral=True)
+                await interaction.followup.send(t('Jogador não encontrado nos dados do servidor.'), ephemeral=True)
                 return
             row = entry["row"]
+            if entry.get("provider") == "ttf":
+                from .stats.reports import profile
+                await interaction.followup.send(embed=profile({"entry": entry, "actualNick": entry["nick"]}))
+                return
             alive_value = get_field(row, ["isalive"]).casefold()
             alive = alive_value in {"1", "true", "yes", "sim", "alive"}
             title = get_field(row, ["charname"], entry["nick"])
             color = 0x2ECC71 if alive else 0xE74C3C
-            embed = discord.Embed(title=f"🧾 Perfil de {title[:240]}", color=color, timestamp=discord.utils.utcnow())
+            embed = discord.Embed(title=''.join((format(t('🧾 Perfil de '), ''), format(title[:240], ''))), color=color, timestamp=discord.utils.utcnow())
             embed.description = "\n".join((
-                f"🎮 **Nick:** {discord.utils.escape_markdown(entry['nick'])}",
-                f"{'💚' if alive else '💀'} **Status:** {'Vivo' if alive else 'Morto'}",
-                f"🛡️ **Facção:** {get_field(row, ['factionname'], 'Lobo solitário')[:200]}",
-                f"🏠 **Safehouse:** {get_field(row, ['safehousetitle'], 'Nenhuma vinculada')[:200]}",
+                ''.join((format(t('🎮 **Nick:** '), ''), format(discord.utils.escape_markdown(entry['nick']), ''))),
+                ''.join((format('💚' if alive else '💀', ''), format(t(' **Status:** '), ''), format(t('Vivo') if alive else t('Morto'), ''))),
+                ''.join((format(t('🛡️ **Facção:** '), ''), format(get_field(row, ['factionname'], t('Lobo solitário'))[:200], ''))),
+                ''.join((format(t('🏠 **Safehouse:** '), ''), format(get_field(row, ['safehousetitle'], t('Nenhuma vinculada'))[:200], ''))),
             ))
-            embed.add_field(name="Profissão", value=get_field(row, ["profession"], "N/A")[:1024], inline=True)
-            embed.add_field(name="Zumbis mortos", value=str(int(to_number(get_field(row, ["zombiekills"]))),), inline=True)
-            embed.add_field(name="Horas vividas", value=f"{to_number(get_field(row, ['hourssurvived'])):.1f}", inline=True)
-            embed.add_field(name="Vida", value=get_field(row, ["health"], "N/A")[:1024], inline=True)
+            embed.add_field(name=t('Profissão'), value=get_field(row, ["profession"], "N/A")[:1024], inline=True)
+            embed.add_field(name=t('Zumbis mortos'), value=str(int(to_number(get_field(row, ["zombiekills"]))),), inline=True)
+            embed.add_field(name=t('Horas vividas'), value=f"{to_number(get_field(row, ['hourssurvived'])):.1f}", inline=True)
+            embed.add_field(name=t('Vida'), value=get_field(row, ["health"], "N/A")[:1024], inline=True)
             embed.add_field(name="SteamID", value=get_field(row, ["steamid"], "N/A")[:1024], inline=True)
-            embed.add_field(name="Posição", value=f"{get_field(row, ['x'], '?')}, {get_field(row, ['y'], '?')}, {get_field(row, ['z'], '?')}"[:1024], inline=True)
-            embed.add_field(name="Arma favorita", value=get_field(row, ["favoriteweapon"], "Nenhuma")[:1024], inline=False)
-            await interaction.response.send_message(embed=embed)
+            embed.add_field(name=t('Posição'), value=f"{get_field(row, ['x'], '?')}, {get_field(row, ['y'], '?')}, {get_field(row, ['z'], '?')}"[:1024], inline=True)
+            embed.add_field(name=t('Arma favorita'), value=get_field(row, ["favoriteweapon"], t('Nenhuma'))[:1024], inline=False)
+            await interaction.followup.send(embed=embed)
 
-        @self.tree.command(name="skills", description="Mostra habilidades de um jogador")
-        @app_commands.describe(jogador="Nick do jogador")
+        @self.tree.command(name="skills", description=t('Mostra habilidades de um jogador'))
+        @app_commands.describe(jogador=t('Nick do jogador'))
         @app_commands.guild_only()
         async def player_skills(interaction: discord.Interaction, jogador: str) -> None:
+            await interaction.response.defer(thinking=True)
             data = await asyncio.to_thread(self.pz_data.player_skills, jogador)
             if not data:
-                await interaction.response.send_message("Jogador não encontrado.", ephemeral=True)
+                await interaction.followup.send(t('Jogador não encontrado.'), ephemeral=True)
                 return
             lines = [f"{item['emoji']} **{item['label']}:** `{item['value']:g}`" for item in data["skills"]]
-            embed = discord.Embed(title=f"Skills de {data['nick']}", description=("\n".join(lines) or "Nenhuma skill exportada.")[:4000], color=0x3498DB, timestamp=discord.utils.utcnow())
-            await interaction.response.send_message(embed=embed)
+            embed = discord.Embed(title=''.join((format(t('Skills de '), ''), format(data['nick'], ''))), description=("\n".join(lines) or t('Nenhuma skill exportada.'))[:4000], color=0x3498DB, timestamp=discord.utils.utcnow())
+            await interaction.followup.send(embed=embed)
 
-        @self.tree.command(name="traits", description="Mostra profissao e traits de um jogador")
-        @app_commands.describe(jogador="Nick do jogador")
+        @self.tree.command(name="traits", description=t('Mostra profissao e traits de um jogador'))
+        @app_commands.describe(jogador=t('Nick do jogador'))
         @app_commands.guild_only()
         async def player_traits(interaction: discord.Interaction, jogador: str) -> None:
+            await interaction.response.defer(thinking=True)
             data = await asyncio.to_thread(self.pz_data.player_traits, jogador)
             if not data:
-                await interaction.response.send_message("Jogador não encontrado.", ephemeral=True)
+                await interaction.followup.send(t('Jogador não encontrado.'), ephemeral=True)
                 return
             traits = data["positive"] + data["negative"] + data["traits"]
-            embed = discord.Embed(title=f"Profissão e traits de {data['nick']}", color=0x9B59B6, timestamp=discord.utils.utcnow())
-            embed.add_field(name="Profissão", value=data["profession"][:1024], inline=False)
-            embed.add_field(name="Traits", value="\n".join(f"- {item}" for item in traits)[:1024] if traits else "Não exportados pelo coletor atual.", inline=False)
-            await interaction.response.send_message(embed=embed)
+            embed = discord.Embed(title=''.join((format(t('Profissão e traits de '), ''), format(data['nick'], ''))), color=0x9B59B6, timestamp=discord.utils.utcnow())
+            embed.add_field(name=t('Profissão'), value=data["profession"][:1024], inline=False)
+            embed.add_field(name="Traits", value="\n".join(f"- {item}" for item in traits)[:1024] if traits else t('Não exportados pelo coletor atual.'), inline=False)
+            await interaction.followup.send(embed=embed)
 
-        @self.tree.command(name="rank", description="Mostra a posicao de um jogador no ranking")
-        @app_commands.describe(jogador="Nick do jogador", tipo="Métrica do ranking")
-        @app_commands.choices(tipo=[app_commands.Choice(name="Zumbis mortos", value="kills"), app_commands.Choice(name="Horas sobrevividas", value="hours")])
+        @self.tree.command(name="rank", description=t('Mostra a posicao de um jogador no ranking'))
+        @app_commands.describe(jogador=t('Nick do jogador'), tipo=t('Métrica do ranking'), escopo=t('Escopo do ranking: conta ou personagem TTF'))
+        @app_commands.choices(tipo=[app_commands.Choice(name="Zumbis mortos", value="kills"), app_commands.Choice(name="Horas sobrevividas", value="hours"),
+                                  app_commands.Choice(name="Distância (m)", value="distance"), app_commands.Choice(name="Abates com veículos", value="vehiclekills"),
+                                  app_commands.Choice(name="Armas quebradas", value="brokenweapons")],
+                             escopo=[app_commands.Choice(name="Conta (histórico acumulado)", value="account"), app_commands.Choice(name="Personagem (TTF)", value="character")])
         @app_commands.guild_only()
-        async def player_rank(interaction: discord.Interaction, jogador: str, tipo: app_commands.Choice[str] | None = None) -> None:
-            metric = "hours" if tipo and tipo.value == "hours" else "kills"
-            rank = await asyncio.to_thread(self.pz_data.player_rank, jogador, metric)
+        async def player_rank(interaction: discord.Interaction, jogador: str, tipo: app_commands.Choice[str] | None = None, escopo: app_commands.Choice[str] | None = None) -> None:
+            metric = tipo.value if tipo else "kills"
+            await interaction.response.defer(thinking=True)
+            rank = await asyncio.to_thread(self.pz_data.player_rank, jogador, metric, escopo.value if escopo else "account")
             if not rank:
-                await interaction.response.send_message("Jogador não encontrado no ranking.", ephemeral=True)
+                await interaction.followup.send(t('Jogador/personagem não encontrado ou métrica indisponível nesta fonte.'), ephemeral=True)
                 return
             value = to_number(get_field(rank["entry"]["row"], [rank["metric"]]))
-            amount = f"{value:.1f} h" if metric == "hours" else f"{value:.0f} zumbis"
-            await interaction.response.send_message(f"**{rank['entry']['nick']}** está em **#{rank['position']} de {rank['total']}** com **{amount}**.")
+            unit = {"hours": " h", "kills": t(' zumbis'), "distance": " m"}.get(metric, "")
+            amount = f"{value:,.2f}{unit}"
+            await interaction.followup.send(''.join(('**', discord.utils.escape_markdown(rank['entry']['nick'])[:250], t('** está em **#'), str(rank['position']), t(' de '), str(rank['total']), t('** com **'), amount, '**.')))
 
-        @self.tree.command(name="localizar_veiculo", description="Localiza um veículo pelo ID registrado pelo FriendHost")
-        @app_commands.describe(id="ID do veículo")
+        @self.tree.command(name="localizar_veiculo", description=t('Localiza um veículo pelo ID registrado pelo FriendHost'))
+        @app_commands.describe(id=t('ID do veículo'))
         @app_commands.guild_only()
         async def locate_vehicle(interaction: discord.Interaction, id: str) -> None:
             vehicle = await asyncio.to_thread(self.pz_data.find_vehicle, id)
             if not vehicle:
-                await interaction.response.send_message("Veículo não encontrado. Confira os arquivos FriendHost em Servidor.", ephemeral=True)
+                await interaction.response.send_message(t('Veículo não encontrado. Confira os arquivos FriendHost em Servidor.'), ephemeral=True)
                 return
             row = vehicle["row"]
-            embed = discord.Embed(title=f"Veículo {get_field(row, ['vehicleid', 'id', 'sqlid'], 'sem ID')}", color=0xF39C12, timestamp=discord.utils.utcnow())
+            embed = discord.Embed(title=''.join((format(t('Veículo '), ''), format(get_field(row, ['vehicleid', 'id', 'sqlid'], t('sem ID')), ''))), color=0xF39C12, timestamp=discord.utils.utcnow())
             embed.add_field(name="Modelo", value=get_field(row, ["scriptname", "vehicle", "type", "name"], "N/A")[:1024], inline=True)
-            embed.add_field(name="Posição", value=f"{get_field(row, ['x'], '?')}, {get_field(row, ['y'], '?')}, {get_field(row, ['z'], '0')}"[:1024], inline=True)
+            embed.add_field(name=t('Posição'), value=f"{get_field(row, ['x'], '?')}, {get_field(row, ['y'], '?')}, {get_field(row, ['z'], '0')}"[:1024], inline=True)
             embed.add_field(name="Dono/chave", value=get_field(row, ["owner", "keyid", "key"], "N/A")[:1024], inline=True)
-            embed.set_footer(text="Dados exportados pelo servidor PZ")
+            embed.set_footer(text=t('Dados exportados pelo servidor PZ'))
             await interaction.response.send_message(embed=embed)
 
-        @self.tree.command(name="mapas", description="Lista os mapas configurados no servidor")
+        @self.tree.command(name="mapas", description=t('Lista os mapas configurados no servidor'))
         @app_commands.guild_only()
         async def list_maps(interaction: discord.Interaction) -> None:
             maps = self.pz_data.configured_maps()
             if not maps:
-                await interaction.response.send_message("Nenhum mapa configurado. Crie config/pz-maps.json a partir do exemplo.", ephemeral=True)
+                await interaction.response.send_message(t('Nenhum mapa configurado. Crie config/pz-maps.json a partir do exemplo.'), ephemeral=True)
                 return
             lines = [f"- `{item['id']}` {item['name']}: ({item['minX']},{item['minY']}) → ({item['maxX']},{item['maxY']})" for item in maps]
-            await interaction.response.send_message("**Mapas configurados:**\n" + "\n".join(lines)[:1850])
+            await interaction.response.send_message(t('**Mapas configurados:**\n') + "\n".join(lines)[:1850])
 
-        @self.tree.command(name="gps", description="Gera imagem da última localização do jogador")
-        @app_commands.describe(jogador="Nick do jogador")
+        @self.tree.command(name="gps", description=t('Gera imagem da última localização do jogador'))
+        @app_commands.describe(jogador=t('Nick do jogador'))
         @app_commands.guild_only()
         async def gps_player(interaction: discord.Interaction, jogador: str) -> None:
             point = await asyncio.to_thread(self.pz_data.player_point, jogador)
             if not point:
-                await interaction.response.send_message("Jogador sem coordenadas exportadas.", ephemeral=True)
+                await interaction.response.send_message(t('Jogador sem coordenadas exportadas.'), ephemeral=True)
                 return
             maps = await asyncio.to_thread(self.pz_data.configured_maps)
             safehouses = await asyncio.to_thread(self.pz_data.safehouses)
@@ -1397,12 +1426,12 @@ class ManguaduBot(discord.Client):
                 "minorGridStep": 100, "majorGridStep": 300, "showPlayerLabels": True,
             }
             png = await asyncio.to_thread(create_map_png, options)
-            map_name = map_entry["name"] if map_entry else "desconhecido"
-            description = f"Última posição de **{point['nick']}**: {point['x']:g}, {point['y']:g}, {point['z']:g}\nMapa: **{map_name}** | Célula: {cell_x},{cell_y} | Chunk: {chunk_x},{chunk_y}"
+            map_name = map_entry["name"] if map_entry else t('desconhecido')
+            description = ''.join((format(t('Última posição de **'), ''), format(point['nick'], ''), '**: ', format(point['x'], ''.join(('g',))), ', ', format(point['y'], ''.join(('g',))), ', ', format(point['z'], ''.join(('g',))), format(t('\nMapa: **'), ''), format(map_name, ''), format(t('** | Célula: '), ''), format(cell_x, ''), ',', format(cell_y, ''), ' | Chunk: ', format(chunk_x, ''), ',', format(chunk_y, '')))
             filename = re.sub(r"[^A-Za-z0-9_.-]", "_", point["nick"])[:80]
             await interaction.response.send_message(content=description, file=discord.File(io.BytesIO(png), filename=f"gps-{filename or 'jogador'}.png"))
 
-        @self.tree.command(name="satelite", description="Gera visão PNG do servidor inteiro")
+        @self.tree.command(name="satelite", description=t('Gera visão PNG do servidor inteiro'))
         @app_commands.guild_only()
         async def satellite_map(interaction: discord.Interaction) -> None:
             points = await asyncio.to_thread(self.pz_data.player_points)
@@ -1410,63 +1439,63 @@ class ManguaduBot(discord.Client):
             safehouses = await asyncio.to_thread(self.pz_data.safehouses)
             options = {
                 "bounds": self.pz_data.world_bounds(points), "maps": maps, "safehouses": safehouses,
-                "points": points, "title": "SATELITE DO SERVIDOR",
-                "subtitle": f"{len(points)} jogadores mapeados",
+                "points": points, "title": t('SATELITE DO SERVIDOR'),
+                "subtitle": ''.join((format(len(points), ''), format(t(' jogadores mapeados'), ''))),
                 "minorGridStep": 300, "majorGridStep": 900,
             }
             png = await asyncio.to_thread(create_map_png, options)
             await interaction.response.send_message(file=discord.File(io.BytesIO(png), filename="satelite-servidor.png"))
 
-        @self.tree.command(name="wipe_zeds", description="Reseta zumbis de um mapa ou célula")
-        @app_commands.describe(alvo="todos, nome do mapa ou celula x,y", confirmar="Digite APAGAR")
+        @self.tree.command(name="wipe_zeds", description=t('Reseta zumbis de um mapa ou célula'))
+        @app_commands.describe(alvo=t('todos, nome do mapa ou celula x,y'), confirmar=t('Digite APAGAR'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def wipe_zeds(interaction: discord.Interaction, alvo: str, confirmar: str) -> None:
             await self._handle_wipe(interaction, "zeds", alvo, confirmar, False)
 
-        @self.tree.command(name="wipe", description="Wipe global: apaga DB, Logs e Saves")
-        @app_commands.describe(confirmar="Digite APAGAR_TUDO")
+        @self.tree.command(name="wipe", description=t('Wipe global: apaga DB, Logs e Saves'))
+        @app_commands.describe(confirmar=t('Digite APAGAR_TUDO'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def wipe_global(interaction: discord.Interaction, confirmar: str) -> None:
             await self._handle_wipe(interaction, "global", "", confirmar, False)
 
-        @self.tree.command(name="wipe_force", description="Reseta mapa/célula ignorando safehouses")
-        @app_commands.describe(alvo="Nome do mapa ou celula x,y", confirmar="Digite APAGAR")
+        @self.tree.command(name="wipe_force", description=t('Reseta mapa/célula ignorando safehouses'))
+        @app_commands.describe(alvo=t('Nome do mapa ou celula x,y'), confirmar=t('Digite APAGAR'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def wipe_force(interaction: discord.Interaction, alvo: str, confirmar: str) -> None:
             await self._handle_wipe(interaction, "cell", alvo, confirmar, True)
 
-        @self.tree.command(name="wipe_teste", description="Simula wipe global sem apagar")
+        @self.tree.command(name="wipe_teste", description=t('Simula wipe global sem apagar'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def wipe_global_test(interaction: discord.Interaction) -> None:
             await self._handle_wipe(interaction, "global", "", "", False, dry_run=True)
 
-        @self.tree.command(name="wipe_chunk", description="Reseta chunk 10x10 protegendo safehouses")
-        @app_commands.describe(chunk="Chunk no formato x,y", confirmar="Digite APAGAR")
+        @self.tree.command(name="wipe_chunk", description=t('Reseta chunk 10x10 protegendo safehouses'))
+        @app_commands.describe(chunk=t('Chunk no formato x,y'), confirmar=t('Digite APAGAR'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def wipe_chunk(interaction: discord.Interaction, chunk: str, confirmar: str) -> None:
             await self._handle_wipe(interaction, "chunk", chunk, confirmar, False)
 
-        @self.tree.command(name="wipe_chunk_force", description="Reseta chunk ignorando safehouses")
-        @app_commands.describe(chunk="Chunk no formato x,y", confirmar="Digite APAGAR")
+        @self.tree.command(name="wipe_chunk_force", description=t('Reseta chunk ignorando safehouses'))
+        @app_commands.describe(chunk=t('Chunk no formato x,y'), confirmar=t('Digite APAGAR'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def wipe_chunk_force(interaction: discord.Interaction, chunk: str, confirmar: str) -> None:
             await self._handle_wipe(interaction, "chunk", chunk, confirmar, True)
 
-        @self.tree.command(name="wipe_chunk_teste", description="Simula exclusão de chunk sem apagar")
-        @app_commands.describe(chunk="Chunk no formato x,y")
+        @self.tree.command(name="wipe_chunk_teste", description=t('Simula exclusão de chunk sem apagar'))
+        @app_commands.describe(chunk=t('Chunk no formato x,y'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def wipe_chunk_test(interaction: discord.Interaction, chunk: str) -> None:
             await self._handle_wipe(interaction, "chunk", chunk, "", False, dry_run=True)
 
-        @self.tree.command(name="rcon", description="Envia um comando ao servidor por RCON ou console Pterodactyl")
-        @app_commands.describe(comando="Comando do servidor")
+        @self.tree.command(name="rcon", description=t('Envia um comando ao servidor por RCON ou console Pterodactyl'))
+        @app_commands.describe(comando=t('Comando do servidor'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def rcon(interaction: discord.Interaction, comando: str) -> None:
@@ -1476,23 +1505,23 @@ class ManguaduBot(discord.Client):
             await interaction.response.defer(ephemeral=True, thinking=True)
             result = await send_rcon_command(server["rcon"]["host"], int(server["rcon"]["port"] or 0), server["rcon"]["password"], comando)
             if result.ok:
-                output = result.output or "Comando executado sem retorno."
-                await interaction.followup.send("Comando executado via RCON:\n```\n" + output[:1800] + "\n```", ephemeral=True)
+                output = result.output or t('Comando executado sem retorno.')
+                await interaction.followup.send(t('Comando executado via RCON:\n```\n') + output[:1800] + "\n```", ephemeral=True)
                 return
             rcon_error = result.error
             if result.stage == "config":
                 missing = describe_missing_rcon(server)
                 if missing:
-                    rcon_error = f"Configuracao do RCON incompleta: {', '.join(missing)}. Confira o .env e config/servers.json."
+                    rcon_error = ''.join((format(t('Configuracao do RCON incompleta: '), ''), format(', '.join(missing), ''), format(t('. Confira o .env e config/servers.json.'), '')))
             async with PterodactylClient(server) as client:
                 fallback = await client.command(comando)
             if fallback["ok"]:
-                await interaction.followup.send("Comando enviado pelo console do Pterodactyl; RCON falhou: " + rcon_error[:900], ephemeral=True)
+                await interaction.followup.send(t('Comando enviado pelo console do Pterodactyl; RCON falhou: ') + rcon_error[:900], ephemeral=True)
             else:
-                await interaction.followup.send(f"Falha ao executar.\nRCON: {rcon_error[:700]}\nPterodactyl: {extract_ptero_error(fallback)[:700]}", ephemeral=True)
+                await interaction.followup.send(''.join((format(t('Falha ao executar.\nRCON: '), ''), format(rcon_error[:700], ''), '\nPterodactyl: ', format(extract_ptero_error(fallback)[:700], ''))), ephemeral=True)
 
-        @self.tree.command(name="servidor", description="Gerencia energia e status do servidor PZ")
-        @app_commands.describe(acao="Ação desejada")
+        @self.tree.command(name="servidor", description=t('Gerencia energia e status do servidor PZ'))
+        @app_commands.describe(acao=t('Ação desejada'))
         @app_commands.choices(acao=[
             app_commands.Choice(name="Status", value="status"),
             app_commands.Choice(name="Ligar", value="start"),
@@ -1509,62 +1538,64 @@ class ManguaduBot(discord.Client):
             await interaction.response.defer(ephemeral=True, thinking=True)
             if acao.value == "status":
                 overview = await self._build_panel_overview(server)
-                await interaction.followup.send(embed=build_server_status_embed(overview, "Consulta manual do slash command"), ephemeral=True)
+                await interaction.followup.send(embed=build_server_status_embed(overview, t('Consulta manual do slash command')), ephemeral=True)
                 return
             if acao.value == "schedule_stop":
-                result = await self._console_command(server, 'servermsg "O SERVIDOR SERA DESLIGADO EM 10 MINUTOS. GUARDEM SEUS ITENS."')
+                result = await self._console_command(server, "servermsg " + _quote_pz(t("O SERVIDOR SERA DESLIGADO EM 10 MINUTOS. GUARDEM SEUS ITENS.")))
                 asyncio.create_task(self._scheduled_server_stop(server))
-                message = "Aviso enviado; desligamento previsto para 10 minutos." if result["ok"] else "Agendamento iniciado, mas o aviso do jogo falhou: " + result["error"][:500]
+                message = t('Aviso enviado; desligamento previsto para 10 minutos.') if result["ok"] else t('Agendamento iniciado, mas o aviso do jogo falhou: ') + result["error"][:500]
                 await interaction.followup.send(message, ephemeral=True)
                 return
             result = await manage_server(server, acao.value)
             if result["ok"]:
-                await interaction.followup.send(f"Comando `{acao.value}` enviado para **{server['label']}** via {result.get('transport', 'servidor')}.", ephemeral=True)
+                await interaction.followup.send(''.join((format(t('Comando `'), ''), format(acao.value, ''), format(t('` enviado para **'), ''), format(server['label'], ''), '** via ', format(result.get('transport', 'servidor'), ''), '.')), ephemeral=True)
             else:
-                await interaction.followup.send("Falha ao controlar o servidor: " + describe_server_error(result), ephemeral=True)
+                await interaction.followup.send(t('Falha ao controlar o servidor: ') + describe_server_error(result), ephemeral=True)
 
-        @self.tree.command(name="status", description="Mostra o perfil resumido de um jogador")
-        @app_commands.describe(nick="Nick do jogador; vazio lista jogadores disponíveis")
+        @self.tree.command(name="status", description=t('Mostra o perfil resumido de um jogador'))
+        @app_commands.describe(nick=t('Nick do jogador; vazio lista jogadores disponíveis'))
         @app_commands.guild_only()
         async def player_status(interaction: discord.Interaction, nick: str | None = None) -> None:
+            await interaction.response.defer(thinking=True)
             if not nick:
                 names = await asyncio.to_thread(self.pz_data.player_names)
-                text = "\n".join(f"{i}. {discord.utils.escape_markdown(name)}" for i, name in enumerate(names[:60], 1)) or "Nenhum jogador disponível nos arquivos FriendHost."
-                await interaction.response.send_message(text[:1900], ephemeral=True)
+                text = "\n".join(f"{i}. {discord.utils.escape_markdown(name)}" for i, name in enumerate(names[:60], 1)) or t('Nenhum jogador disponível nos arquivos FriendHost.')
+                await interaction.followup.send(text[:1900], ephemeral=True)
                 return
             snapshot = await asyncio.to_thread(collect_player_snapshot, nick, data=self.pz_data)
             if not snapshot["found"]:
-                await interaction.response.send_message("Jogador ou arquivos FriendHost não encontrados.", ephemeral=True)
+                await interaction.followup.send(t('Jogador ou arquivos FriendHost não encontrados.'), ephemeral=True)
                 return
-            await interaction.response.send_message(embed=build_status_embed(snapshot))
+            await interaction.followup.send(embed=build_status_embed(snapshot))
 
-        @self.tree.command(name="statuscomplete", description="Gera ficha detalhada do jogador")
-        @app_commands.describe(nick="Nick do jogador; vazio lista jogadores disponíveis")
+        @self.tree.command(name="statuscomplete", description=t('Gera ficha detalhada do jogador'))
+        @app_commands.describe(nick=t('Nick do jogador; vazio lista jogadores disponíveis'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def player_status_complete(interaction: discord.Interaction, nick: str | None = None) -> None:
             if not await _admin_guard(interaction, self.store):
                 return
+            await interaction.response.defer(thinking=True, ephemeral=True)
             if not nick:
                 names = await asyncio.to_thread(self.pz_data.player_names)
-                await interaction.response.send_message("Jogadores disponíveis: " + (", ".join(names[:60]) or "nenhum"), ephemeral=True)
+                await interaction.followup.send(t('Jogadores disponíveis: ') + (", ".join(names[:60]) or "nenhum"), ephemeral=True)
                 return
             snapshot = await asyncio.to_thread(collect_player_snapshot, nick, data=self.pz_data, include_inventory=True, include_db=True)
             if not snapshot["found"]:
                 reason = snapshot.get("reason")
                 if reason in {"missing_nick", "not_found"}:
-                    message = "Jogador não encontrado nos dados do servidor."
+                    message = t('Jogador não encontrado nos dados do servidor.')
                 else:
-                    message = f"Encontrei **{snapshot.get('actualNick', nick)}**, mas não há arquivos de perfil, skills ou inventário."
-                await interaction.response.send_message(message, ephemeral=True)
+                    message = ''.join((format(t('Encontrei **'), ''), format(snapshot.get('actualNick', nick), ''), format(t('**, mas não há arquivos de perfil, skills ou inventário.'), '')))
+                await interaction.followup.send(message, ephemeral=True)
                 return
             report = build_status_complete_report(snapshot)
             safe_nick = re.sub(r"[^A-Za-z0-9_.-]", "_", snapshot["actualNick"])[:80] or "jogador"
             file = discord.File(io.BytesIO(report.encode("utf-8")), filename=f"statuscomplete-{safe_nick}.txt")
-            await interaction.response.send_message(embed=build_status_complete_embed(snapshot), file=file, ephemeral=True)
+            await interaction.followup.send(embed=build_status_complete_embed(snapshot), file=file, ephemeral=True)
 
-        @self.tree.command(name="logs", description="Extrai logs de um jogador em um intervalo")
-        @app_commands.describe(jogador="Nick do jogador", tipo="Tipo de log", horas="Intervalo em horas")
+        @self.tree.command(name="logs", description=t('Extrai logs de um jogador em um intervalo'))
+        @app_commands.describe(jogador=t('Nick do jogador'), tipo=t('Tipo de log'), horas=t('Intervalo em horas'))
         @app_commands.choices(tipo=[
             app_commands.Choice(name="PVP", value="pvp"), app_commands.Choice(name="Chat", value="chat"),
             app_commands.Choice(name="Usuários", value="user"), app_commands.Choice(name="Administração", value="admin"),
@@ -1576,13 +1607,13 @@ class ManguaduBot(discord.Client):
             if not await _admin_guard(interaction, self.store):
                 return
             result = await asyncio.to_thread(self.pz_data.extract_player_logs, jogador, tipo.value, horas)
-            content = "\n".join(result["lines"]) or "Nenhuma linha encontrada."
+            content = "\n".join(result["lines"]) or t('Nenhuma linha encontrada.')
             file = discord.File(io.BytesIO(content.encode("utf-8")), filename=f"logs-{int(discord.utils.utcnow().timestamp())}.txt")
-            await interaction.response.send_message(f"Encontradas **{len(result['lines'])}** linha(s) em {len(result['files'])} arquivo(s).", file=file, ephemeral=True)
+            await interaction.response.send_message(''.join((format(t('Encontradas **'), ''), format(len(result['lines']), ''), format(t('** linha(s) em '), ''), format(len(result['files']), ''), format(t(' arquivo(s).'), ''))), file=file, ephemeral=True)
 
-        safehouse_group = app_commands.Group(name="safehouse", description="Gerencia safehouses e backups gerais")
+        safehouse_group = app_commands.Group(name="safehouse", description=t('Gerencia safehouses e backups gerais'))
 
-        @safehouse_group.command(name="listar", description="Lista todas as safehouses")
+        @safehouse_group.command(name="listar", description=t('Lista todas as safehouses'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def safehouse_list(interaction: discord.Interaction) -> None:
@@ -1590,13 +1621,12 @@ class ManguaduBot(discord.Client):
                 return
             rows = await asyncio.to_thread(self.pz_data.safehouses)
             lines = [
-                f"{index}. {get_field(row, ['title'], 'Sem título')} | {get_field(row, ['owner'], 'Sem dono')} | "
-                f"({get_field(row, ['x'], '?')},{get_field(row, ['y'], '?')}) -> ({get_field(row, ['x2'], '?')},{get_field(row, ['y2'], '?')})"
+                ''.join((format(index, ''), '. ', format(get_field(row, ['title'], t('Sem título')), ''), ' | ', format(get_field(row, ['owner'], t('Sem dono')), ''), ' | (', format(get_field(row, ['x'], '?'), ''), ',', format(get_field(row, ['y'], '?'), ''), ') -> (', format(get_field(row, ['x2'], '?'), ''), ',', format(get_field(row, ['y2'], '?'), ''), ')'))
                 for index, row in enumerate(rows, 1)
             ]
-            await interaction.response.send_message("\n".join(lines)[:1900] if lines else "Nenhuma safehouse registrada.", ephemeral=True)
+            await interaction.response.send_message("\n".join(lines)[:1900] if lines else t('Nenhuma safehouse registrada.'), ephemeral=True)
 
-        @safehouse_group.command(name="listar_bkp_geral", description="Lista backups gerais de safehouse")
+        @safehouse_group.command(name="listar_bkp_geral", description=t('Lista backups gerais de safehouse'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def safehouse_backups(interaction: discord.Interaction) -> None:
@@ -1610,7 +1640,7 @@ class ManguaduBot(discord.Client):
                 return
             backups = [item for item in result.get("backups", []) if item["name"].startswith("Safehouses geral - ")]
             if not backups:
-                await interaction.response.send_message("Nenhum backup geral encontrado.", ephemeral=True)
+                await interaction.response.send_message(t('Nenhum backup geral encontrado.'), ephemeral=True)
                 return
             lines = [
                 f"`{item['uuid']}` {item['name']} | {item['completedAt'] or 'processando'} | {int(item['bytes'] or 0) / (1024 ** 2):.1f} MiB"
@@ -1618,7 +1648,7 @@ class ManguaduBot(discord.Client):
             ]
             await interaction.response.send_message("\n".join(lines)[:1900], ephemeral=True)
 
-        @safehouse_group.command(name="executar_bkp_geral", description="Cria backup geral antes de manutenção")
+        @safehouse_group.command(name="executar_bkp_geral", description=t('Cria backup geral antes de manutenção'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def safehouse_create_backup(interaction: discord.Interaction) -> None:
@@ -1630,30 +1660,30 @@ class ManguaduBot(discord.Client):
                 result = await client.create_backup(name=name, is_locked=True)
             if result["ok"]:
                 backup = result.get("backup") or {}
-                await interaction.response.send_message(f"Backup geral iniciado: `{backup.get('uuid', 'sem UUID')}`. Ele inclui o save completo para manter safehouses e mundo consistentes.", ephemeral=True)
+                await interaction.response.send_message(''.join((format(t('Backup geral iniciado: `'), ''), format(backup.get('uuid', t('sem UUID')), ''), format(t('`. Ele inclui o save completo para manter safehouses e mundo consistentes.'), ''))), ephemeral=True)
             else:
                 await interaction.response.send_message(extract_ptero_error(result), ephemeral=True)
 
-        @safehouse_group.command(name="restaurar_bkp_geral", description="Restaura backup geral com o servidor offline")
-        @app_commands.describe(uuid="UUID do backup", confirmar="Digite RESTAURAR")
+        @safehouse_group.command(name="restaurar_bkp_geral", description=t('Restaura backup geral com o servidor offline'))
+        @app_commands.describe(uuid=t('UUID do backup'), confirmar=t('Digite RESTAURAR'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def safehouse_restore_backup(interaction: discord.Interaction, uuid: str, confirmar: str) -> None:
             if not await _admin_guard(interaction, self.store):
                 return
             if clean_text(confirmar).upper() != "RESTAURAR":
-                await interaction.response.send_message("Confirmação inválida. Digite exatamente RESTAURAR.", ephemeral=True)
+                await interaction.response.send_message(t('Confirmação inválida. Digite exatamente RESTAURAR.'), ephemeral=True)
                 return
             server = self.registry.get_default_server()
             state = await fetch_server_resources(server)
             if not state["ok"] or clean_text(state.get("state")).casefold() != "offline":
                 current = state.get("state") or describe_server_error(state)
-                await interaction.response.send_message(f"O servidor precisa estar offline. Estado: {current}.", ephemeral=True)
+                await interaction.response.send_message(''.join((format(t('O servidor precisa estar offline. Estado: '), ''), format(current, ''), '.')), ephemeral=True)
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
             async with PterodactylClient(server) as client:
                 result = await client.restore_backup(uuid, truncate=False)
-            await interaction.followup.send("Restauração solicitada ao Pterodactyl." if result["ok"] else extract_ptero_error(result), ephemeral=True)
+            await interaction.followup.send(t('Restauração solicitada ao Pterodactyl.') if result["ok"] else extract_ptero_error(result), ephemeral=True)
 
         self.tree.add_command(safehouse_group)
 
@@ -1662,10 +1692,10 @@ class ManguaduBot(discord.Client):
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
             result = await self._ptero_console_command(self.registry.get_default_server(), command)
-            await interaction.followup.send(success if result["ok"] else "Falha no console do Pterodactyl: " + result["error"][:1500], ephemeral=True)
+            await interaction.followup.send(success if result["ok"] else t('Falha no console do Pterodactyl: ') + result["error"][:1500], ephemeral=True)
 
-        @self.tree.command(name="adduser", description="Adiciona um usuário à whitelist do PZ")
-        @app_commands.describe(usuario="Usuário PZ", senha="Senha inicial")
+        @self.tree.command(name="adduser", description=t('Adiciona um usuário à whitelist do PZ'))
+        @app_commands.describe(usuario=t('Usuário PZ'), senha=t('Senha inicial'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def add_pz_user(interaction: discord.Interaction, usuario: str, senha: str) -> None:
@@ -1674,42 +1704,42 @@ class ManguaduBot(discord.Client):
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-            await send_player_admin_command(interaction, command, "Usuário adicionado à whitelist.")
+            await send_player_admin_command(interaction, command, t('Usuário adicionado à whitelist.'))
 
-        @self.tree.command(name="removeuserfromwhitelist", description="Remove um usuário da whitelist do PZ")
-        @app_commands.describe(usuario="Usuário PZ")
+        @self.tree.command(name="removeuserfromwhitelist", description=t('Remove um usuário da whitelist do PZ'))
+        @app_commands.describe(usuario=t('Usuário PZ'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def remove_pz_user(interaction: discord.Interaction, usuario: str) -> None:
-            await send_player_admin_command(interaction, f"removeuserfromwhitelist {_quote_pz(usuario)}", "Usuário removido da whitelist.")
+            await send_player_admin_command(interaction, f"removeuserfromwhitelist {_quote_pz(usuario)}", t('Usuário removido da whitelist.'))
 
-        @self.tree.command(name="banid", description="Bane um SteamID64 no servidor")
-        @app_commands.describe(steamid="SteamID64 numérico")
+        @self.tree.command(name="banid", description=t('Bane um SteamID64 no servidor'))
+        @app_commands.describe(steamid=t('SteamID64 numérico'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def ban_steam_id(interaction: discord.Interaction, steamid: str) -> None:
             normalized = "".join(character for character in steamid if character.isdigit())
             if not 15 <= len(normalized) <= 20:
-                await interaction.response.send_message("SteamID inválido. Informe o SteamID64 numérico completo.", ephemeral=True)
+                await interaction.response.send_message(t('SteamID inválido. Informe o SteamID64 numérico completo.'), ephemeral=True)
                 return
-            await send_player_admin_command(interaction, f"banid {normalized}", "Banimento por SteamID enviado.")
+            await send_player_admin_command(interaction, f"banid {normalized}", t('Banimento por SteamID enviado.'))
 
-        @self.tree.command(name="kick", description="Expulsa um jogador do servidor")
-        @app_commands.describe(jogador="Nick no servidor")
+        @self.tree.command(name="kick", description=t('Expulsa um jogador do servidor'))
+        @app_commands.describe(jogador=t('Nick no servidor'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def kick_player(interaction: discord.Interaction, jogador: str) -> None:
-            await send_player_admin_command(interaction, f"kickuser {_quote_pz(jogador)}", f"{clean_text(jogador)} expulso.")
+            await send_player_admin_command(interaction, f"kickuser {_quote_pz(jogador)}", ''.join((format(clean_text(jogador), ''), format(t(' expulso.'), ''))))
 
-        @self.tree.command(name="kick_all", description="Expulsa todos os jogadores online")
-        @app_commands.describe(confirmar="Digite EXPULSAR")
+        @self.tree.command(name="kick_all", description=t('Expulsa todos os jogadores online'))
+        @app_commands.describe(confirmar=t('Digite EXPULSAR'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def kick_all_players(interaction: discord.Interaction, confirmar: str) -> None:
             if not await _admin_guard(interaction, self.store):
                 return
             if clean_text(confirmar).upper() != "EXPULSAR":
-                await interaction.response.send_message("Confirmação inválida. Digite exatamente EXPULSAR.", ephemeral=True)
+                await interaction.response.send_message(t('Confirmação inválida. Digite exatamente EXPULSAR.'), ephemeral=True)
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
             server = self.registry.get_default_server()
@@ -1723,59 +1753,59 @@ class ManguaduBot(discord.Client):
                 result = await self._ptero_console_command(server, f"kickuser {_quote_pz(name)}")
                 if not result["ok"]:
                     failures.append(name)
-            await interaction.followup.send(f"Jogadores processados: {len(names)}. Falhas: {len(failures)}" + (f" ({', '.join(failures)[:900]})" if failures else ""), ephemeral=True)
+            await interaction.followup.send(''.join((format(t('Jogadores processados: '), ''), format(len(names), ''), format(t('. Falhas: '), ''), format(len(failures), ''))) + (f" ({', '.join(failures)[:900]})" if failures else ""), ephemeral=True)
 
-        @self.tree.command(name="godmode", description="Ativa ou desativa o god mode de um jogador")
-        @app_commands.describe(jogador="Nick no servidor", ativar="Estado desejado")
+        @self.tree.command(name="godmode", description=t('Ativa ou desativa o god mode de um jogador'))
+        @app_commands.describe(jogador=t('Nick no servidor'), ativar=t('Estado desejado'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def set_godmode(interaction: discord.Interaction, jogador: str, ativar: bool) -> None:
-            await send_player_admin_command(interaction, f"godmod {_quote_pz(jogador)} -{str(ativar).lower()}", f"God mode {'ativado' if ativar else 'desativado'} para {clean_text(jogador)}.")
+            await send_player_admin_command(interaction, f"godmod {_quote_pz(jogador)} -{str(ativar).lower()}", ''.join((format(t('God mode '), ''), format(t('ativado') if ativar else t('desativado'), ''), format(t(' para '), ''), format(clean_text(jogador), ''), '.')))
 
-        @self.tree.command(name="invisible", description="Ativa ou desativa a invisibilidade")
-        @app_commands.describe(jogador="Nick no servidor", ativar="Estado desejado")
+        @self.tree.command(name="invisible", description=t('Ativa ou desativa a invisibilidade'))
+        @app_commands.describe(jogador=t('Nick no servidor'), ativar=t('Estado desejado'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def set_invisible(interaction: discord.Interaction, jogador: str, ativar: bool) -> None:
-            await send_player_admin_command(interaction, f"invisible {_quote_pz(jogador)} -{str(ativar).lower()}", f"Invisibilidade {'ativada' if ativar else 'desativada'} para {clean_text(jogador)}.")
+            await send_player_admin_command(interaction, f"invisible {_quote_pz(jogador)} -{str(ativar).lower()}", ''.join((format(t('Invisibilidade '), ''), format('ativada' if ativar else 'desativada', ''), format(t(' para '), ''), format(clean_text(jogador), ''), '.')))
 
-        @self.tree.command(name="grantadmin", description="Concede acesso administrativo a um jogador")
-        @app_commands.describe(jogador="Nick no servidor")
+        @self.tree.command(name="grantadmin", description=t('Concede acesso administrativo a um jogador'))
+        @app_commands.describe(jogador=t('Nick no servidor'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def grant_admin(interaction: discord.Interaction, jogador: str) -> None:
-            await send_player_admin_command(interaction, f"grantadmin {_quote_pz(jogador)}", f"Admin concedido para {clean_text(jogador)}.")
+            await send_player_admin_command(interaction, f"grantadmin {_quote_pz(jogador)}", ''.join((format(t('Admin concedido para '), ''), format(clean_text(jogador), ''), '.')))
 
-        @self.tree.command(name="removeadmin", description="Remove acesso administrativo de um jogador")
-        @app_commands.describe(jogador="Nick no servidor")
+        @self.tree.command(name="removeadmin", description=t('Remove acesso administrativo de um jogador'))
+        @app_commands.describe(jogador=t('Nick no servidor'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def remove_admin(interaction: discord.Interaction, jogador: str) -> None:
-            await send_player_admin_command(interaction, f"removeadmin {_quote_pz(jogador)}", f"Admin removido de {clean_text(jogador)}.")
+            await send_player_admin_command(interaction, f"removeadmin {_quote_pz(jogador)}", ''.join((format(t('Admin removido de '), ''), format(clean_text(jogador), ''), '.')))
 
-        @self.tree.command(name="tpto", description="Teleporta jogador para coordenadas")
-        @app_commands.describe(jogador="Nick no servidor", x="Coordenada X", y="Coordenada Y", z="Andar Z")
+        @self.tree.command(name="tpto", description=t('Teleporta jogador para coordenadas'))
+        @app_commands.describe(jogador=t('Nick no servidor'), x=t('Coordenada X'), y=t('Coordenada Y'), z=t('Andar Z'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def teleport_coordinates(interaction: discord.Interaction, jogador: str, x: int, y: int, z: int | None = None) -> None:
-            await send_player_admin_command(interaction, f"teleportto {_quote_pz(jogador)} {x},{y},{z or 0}", f"{clean_text(jogador)} teleportado para as coordenadas.")
+            await send_player_admin_command(interaction, f"teleportto {_quote_pz(jogador)} {x},{y},{z or 0}", ''.join((format(clean_text(jogador), ''), format(t(' teleportado para as coordenadas.'), ''))))
 
-        @self.tree.command(name="tp", description="Teleporta um jogador até outro")
-        @app_commands.describe(jogador="Nick que será teleportado", destino="Nick de destino")
+        @self.tree.command(name="tp", description=t('Teleporta um jogador até outro'))
+        @app_commands.describe(jogador=t('Nick que será teleportado'), destino=t('Nick de destino'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def teleport_player(interaction: discord.Interaction, jogador: str, destino: str) -> None:
-            await send_player_admin_command(interaction, f"teleport {_quote_pz(jogador)} {_quote_pz(destino)}", f"{clean_text(jogador)} teleportado.")
+            await send_player_admin_command(interaction, f"teleport {_quote_pz(jogador)} {_quote_pz(destino)}", ''.join((format(clean_text(jogador), ''), format(t(' teleportado.'), ''))))
 
-        @self.tree.command(name="servermsg", description="Envia mensagem para o servidor PZ")
-        @app_commands.describe(mensagem="Mensagem para os jogadores")
+        @self.tree.command(name="servermsg", description=t('Envia mensagem para o servidor PZ'))
+        @app_commands.describe(mensagem=t('Mensagem para os jogadores'))
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def server_message(interaction: discord.Interaction, mensagem: app_commands.Range[str, 1, 500]) -> None:
-            await send_player_admin_command(interaction, f"servermsg {_quote_pz(mensagem)}", "Mensagem enviada ao servidor.")
+            await send_player_admin_command(interaction, f"servermsg {_quote_pz(mensagem)}", t('Mensagem enviada ao servidor.'))
 
-        @self.tree.command(name="deletearquivo", description="Apaga dados FriendHost para forçar sua recriação")
-        @app_commands.describe(alvo="Escopo da limpeza", nick="Obrigatório quando alvo é jogador")
+        @self.tree.command(name="deletearquivo", description=t('Apaga dados FriendHost para forçar sua recriação'))
+        @app_commands.describe(alvo=t('Escopo da limpeza'), nick=t('Obrigatório quando alvo é jogador'))
         @app_commands.choices(alvo=[
             app_commands.Choice(name="Ranking geral", value="ranking"),
             app_commands.Choice(name="Inventários", value="inventarios"),
@@ -1788,12 +1818,12 @@ class ManguaduBot(discord.Client):
             if not await _admin_guard(interaction, self.store):
                 return
             if alvo.value == "jogador" and not clean_text(nick):
-                await interaction.response.send_message("Informe o nick ao escolher o alvo jogador.", ephemeral=True)
+                await interaction.response.send_message(t('Informe o nick ao escolher o alvo jogador.'), ephemeral=True)
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
             targets = await asyncio.to_thread(self.pz_data.delete_targets, alvo.value, nick or "")
             if targets is None:
-                await interaction.followup.send("Jogador não encontrado nos dados do FriendHost.", ephemeral=True)
+                await interaction.followup.send(t('Jogador não encontrado nos dados do FriendHost.'), ephemeral=True)
                 return
             deleted, failed = [], []
             for path in targets:
@@ -1803,13 +1833,13 @@ class ManguaduBot(discord.Client):
                 except OSError as exc:
                     failed.append(f"{path.name} ({exc})")
             details = "\n".join(f"- {path}" for path in deleted[:45])
-            message = f"Arquivos apagados: {len(deleted)}"
+            message = ''.join((format(t('Arquivos apagados: '), ''), format(len(deleted), '')))
             if details:
                 message += "\n" + details
             if len(deleted) > 45:
-                message += f"\n... e mais {len(deleted) - 45}"
+                message += ''.join((format(t('\n... e mais '), ''), format(len(deleted) - 45, '')))
             if failed:
-                message += f"\nFalhas: {len(failed)}\n" + "\n".join(f"- {item}" for item in failed[:10])
+                message += ''.join((format(t('\nFalhas: '), ''), format(len(failed), ''), '\n')) + "\n".join(f"- {item}" for item in failed[:10])
             self.pz_data = PzData(getenv("CSV_BASE_PATH"))
             await interaction.followup.send(message[:1900], ephemeral=True)
 
@@ -1835,15 +1865,15 @@ class ManguaduBot(discord.Client):
         await interaction.response.defer(ephemeral=True, thinking=True)
         if clean_text(url).casefold() in {"limpar", "remover", "clear", "remove"}:
             update_draft_theme({key: None})
-            await interaction.followup.send("Mídia removida do rascunho. Use `/painel preview` e depois `/painel salvar`.", ephemeral=True)
+            await interaction.followup.send(t('Mídia removida do rascunho. Use `/painel preview` e depois `/painel salvar`.'), ephemeral=True)
             return
         try:
             media = await store_panel_media(key, attachment=attachment, url=url or "")
             update_draft_theme({key: media})
         except (ValueError, aiohttp.ClientError, TimeoutError) as exc:
-            await interaction.followup.send(f"Não foi possível salvar a mídia: {exc}", ephemeral=True)
+            await interaction.followup.send(''.join((format(t('Não foi possível salvar a mídia: '), ''), format(exc, ''))), ephemeral=True)
             return
-        await interaction.followup.send("Mídia armazenada no rascunho. Use `/painel preview` e depois `/painel salvar`.", ephemeral=True)
+        await interaction.followup.send(t('Mídia armazenada no rascunho. Use `/painel preview` e depois `/painel salvar`.'), ephemeral=True)
 
     async def _panel_text_config(self, interaction: discord.Interaction, key: str, value: str, *, is_color: bool = False) -> None:
         if not await _admin_guard(interaction, self.store):
@@ -1852,26 +1882,26 @@ class ManguaduBot(discord.Client):
         if is_color:
             raw = normalized.removeprefix("#")
             if not re.fullmatch(r"[0-9a-fA-F]{6}", raw):
-                await interaction.response.send_message("Cor inválida. Use seis dígitos hexadecimais, por exemplo `#28D17C`.", ephemeral=True)
+                await interaction.response.send_message(t('Cor inválida. Use seis dígitos hexadecimais, por exemplo `#28D17C`.'), ephemeral=True)
                 return
             normalized = f"#{raw.upper()}"
         update_draft_theme({key: normalized})
-        await interaction.response.send_message("Rascunho atualizado. Use `/painel preview` e depois `/painel salvar`.", ephemeral=True)
+        await interaction.response.send_message(t('Rascunho atualizado. Use `/painel preview` e depois `/painel salvar`.'), ephemeral=True)
 
     async def _panel_link_player(self, interaction: discord.Interaction, nick: str, user_id: int) -> None:
         if not await _admin_guard(interaction, self.store):
             return
         if not set_player_link(nick, user_id):
-            await interaction.response.send_message("Informe um nick PZ e um membro do Discord.", ephemeral=True)
+            await interaction.response.send_message(t('Informe um nick PZ e um membro do Discord.'), ephemeral=True)
             return
-        await interaction.response.send_message(f"**{clean_text(nick)}** foi vinculado a <@{user_id}>.", ephemeral=True)
+        await interaction.response.send_message(''.join(('**', format(clean_text(nick), ''), format(t('** foi vinculado a <@'), ''), format(user_id, ''), '>.')), ephemeral=True)
 
     async def _panel_unlink_player(self, interaction: discord.Interaction, nick: str) -> None:
         if not await _admin_guard(interaction, self.store):
             return
         removed = remove_player_link(nick)
         await interaction.response.send_message(
-            f"Vínculo de **{clean_text(nick)}** removido." if removed else f"**{clean_text(nick)}** não possuía vínculo.", ephemeral=True,
+            ''.join((format(t('Vínculo de **'), ''), format(clean_text(nick), ''), format(t('** removido.'), ''))) if removed else ''.join(('**', format(clean_text(nick), ''), format(t('** não possuía vínculo.'), ''))), ephemeral=True,
         )
 
     async def _panel_power(self, interaction: discord.Interaction, action: str) -> None:
@@ -1880,7 +1910,7 @@ class ManguaduBot(discord.Client):
         await interaction.response.defer(ephemeral=True, thinking=True)
         result = await manage_server(self.registry.get_default_server(), action)
         via = "Docker/local" if result.get("transport") == "docker" else "Pterodactyl"
-        message = f"Comando `{action}` enviado via {via}." if result.get("ok") else describe_server_error(result)
+        message = ''.join((format(t('Comando `'), ''), format(action, ''), format(t('` enviado via '), ''), format(via, ''), '.')) if result.get("ok") else describe_server_error(result)
         await interaction.followup.send(message[:1900], ephemeral=True)
 
     async def _panel_resources(self, interaction: discord.Interaction) -> None:
@@ -1898,13 +1928,13 @@ class ManguaduBot(discord.Client):
             if size < 1024 ** 2: return f"{size / 1024:.1f} KB"
             if size < 1024 ** 3: return f"{size / 1024 ** 2:.1f} MB"
             return f"{size / 1024 ** 3:.2f} GB"
-        embed = discord.Embed(title="Recursos do servidor", color=0x2C3E50, timestamp=discord.utils.utcnow())
-        embed.add_field(name="Estado", value=str(result.get("state", "Desconhecido")), inline=True)
+        embed = discord.Embed(title=t('Recursos do servidor'), color=0x2C3E50, timestamp=discord.utils.utcnow())
+        embed.add_field(name=t('Estado'), value=str(result.get("state", t('Desconhecido'))), inline=True)
         embed.add_field(name="CPU", value=f"{to_number(resources.get('cpu_absolute')):.1f}%", inline=True)
         embed.add_field(name="RAM", value=byte_size(resources.get("memory_bytes")), inline=True)
-        embed.add_field(name="Disco", value=byte_size(resources.get("disk_bytes")), inline=True)
-        embed.add_field(name="Rede recebida", value=byte_size(resources.get("network_rx_bytes")), inline=True)
-        embed.add_field(name="Rede enviada", value=byte_size(resources.get("network_tx_bytes")), inline=True)
+        embed.add_field(name=t('Disco'), value=byte_size(resources.get("disk_bytes")), inline=True)
+        embed.add_field(name=t('Rede recebida'), value=byte_size(resources.get("network_rx_bytes")), inline=True)
+        embed.add_field(name=t('Rede enviada'), value=byte_size(resources.get("network_tx_bytes")), inline=True)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     async def _panel_preview(self, interaction: discord.Interaction, panel_type: str) -> None:
@@ -1939,9 +1969,9 @@ class ManguaduBot(discord.Client):
             await self.refresh_panels()
         except Exception:
             logger.exception("Tema salvo, mas a atualizacao dos paineis falhou")
-            await interaction.followup.send(f"Tema **{theme['title']}** salvo, mas a atualização imediata dos painéis falhou. Confira os canais e permissões.", ephemeral=True)
+            await interaction.followup.send(''.join((format(t('Tema **'), ''), format(theme['title'], ''), format(t('** salvo, mas a atualização imediata dos painéis falhou. Confira os canais e permissões.'), ''))), ephemeral=True)
             return
-        await interaction.followup.send(f"Tema **{theme['title']}** salvo. Os painéis configurados foram atualizados.", ephemeral=True)
+        await interaction.followup.send(''.join((format(t('Tema **'), ''), format(theme['title'], ''), format(t('** salvo. Os painéis configurados foram atualizados.'), ''))), ephemeral=True)
 
     async def _build_panel_overview(self, server: dict[str, Any]) -> dict[str, Any]:
         ptero_task = fetch_server_resources(server)
@@ -2060,7 +2090,7 @@ class ManguaduBot(discord.Client):
                     connect_address=server.get("connectAddress") or getenv("SERVER_CONNECT_ADDRESS", ""),
                 )
                 await self._upsert_panel_message(guild, config, "stats", "stats_panel_message_id", embeds, files)
-            if config["channels"].get("ranking") and self.pz_data.base_path and self.pz_data.base_path.is_dir():
+            if config["channels"].get("ranking") and self.pz_data.base_path:
                 players, factions, deaths = await asyncio.gather(
                     asyncio.to_thread(self.pz_data.player_rows),
                     asyncio.to_thread(self.pz_data.faction_rows),
@@ -2075,42 +2105,42 @@ class ManguaduBot(discord.Client):
             return
         automation = self.automations.set_enabled(automation_id, enabled)
         if not automation:
-            await interaction.response.send_message("Automação não encontrada.", ephemeral=True)
+            await interaction.response.send_message(t('Automação não encontrada.'), ephemeral=True)
             return
-        action = "reativada" if enabled else "pausada"
-        await interaction.response.send_message(f"Automação {action}.\n{self.automations.format_line(automation)}", ephemeral=True)
+        action = t('reativada') if enabled else t('pausada')
+        await interaction.response.send_message(''.join((format(t('Automação '), ''), format(action, ''), '.\n', format(self.automations.format_line(automation), ''))), ephemeral=True)
 
 
     async def _validate_kick_auto_setup(self, guild: discord.Guild | None) -> tuple[bool, str]:
         if guild is None:
-            return False, "Este comando so funciona dentro de um servidor Discord."
+            return False, t('Este comando so funciona dentro de um servidor Discord.')
         settings = self.store.get_settings(guild.id)
         voice_channel = guild.get_channel(settings["kick_automatico"].get("voice_channel_id"))
         if not isinstance(voice_channel, discord.VoiceChannel):
-            return False, "Selecione uma call de voz existente antes de ativar a fiscalização."
+            return False, t('Selecione uma call de voz existente antes de ativar a fiscalização.')
 
         server = self.registry.get_server(settings["wl"].get("server_id", "default"))
         missing = describe_missing_rcon(server)
         if missing:
-            return False, f"RCON incompleto para o servidor selecionado: {', '.join(missing)}."
+            return False, ''.join((format(t('RCON incompleto para o servidor selecionado: '), ''), format(', '.join(missing), ''), '.'))
         rcon = server["rcon"]
         result = await send_rcon_command(rcon["host"], int(rcon["port"]), rcon["password"], "players")
         if not result.ok:
-            return False, f"Nao foi possivel validar o RCON: {result.error}"
+            return False, ''.join((format(t('Nao foi possivel validar o RCON: '), ''), format(result.error, '')))
         names = _parse_players_snapshot(result.output)
         if names is None:
-            return False, "A resposta de `/players` nao trouxe uma lista completa e reconhecivel; a fiscalização nao foi ativada."
+            return False, t('A resposta de `/players` nao trouxe uma lista completa e reconhecivel; a fiscalização nao foi ativada.')
 
         links = await asyncio.to_thread(load_player_links)
         if names and not links:
-            return False, "O arquivo de vínculos PZ/Discord está vazio ou indisponível; a fiscalização não foi ativada."
+            return False, t('O arquivo de vínculos PZ/Discord está vazio ou indisponível; a fiscalização não foi ativada.')
         links_by_name = {name.casefold(): user_id for name, user_id in links.items()}
         unlinked = [name for name in names if not links_by_name.get(name.casefold(), "").isdigit()]
         if unlinked:
             sample = ", ".join(f"`{discord.utils.escape_markdown(name)}`" for name in unlinked[:12])
-            remainder = f" e mais {len(unlinked) - 12}" if len(unlinked) > 12 else ""
-            return False, f"Vincule os jogadores online antes de ativar usando `/painel jogadores vincular`: {sample}{remainder}."
-        return True, "RCON e lista de jogadores validados. Jogadores novos também precisam estar vinculados antes de entrar no servidor."
+            remainder = ''.join((format(t(' e mais '), ''), format(len(unlinked) - 12, ''))) if len(unlinked) > 12 else ""
+            return False, ''.join((format(t('Vincule os jogadores online antes de ativar usando `/painel jogadores vincular`: '), ''), format(sample, ''), format(remainder, ''), '.'))
+        return True, t('RCON e lista de jogadores validados. Jogadores novos também precisam estar vinculados antes de entrar no servidor.')
 
     def _clear_kick_auto_state(self, guild_id: int) -> None:
         for state in (self._kick_auto_missing_since, self._kick_auto_last_attempt):
@@ -2133,14 +2163,14 @@ class ManguaduBot(discord.Client):
         voice_channel = guild.get_channel(kick_config.get("voice_channel_id"))
         if not isinstance(voice_channel, discord.VoiceChannel):
             self._clear_kick_auto_state(guild.id)
-            self._kick_auto_log_warning(guild.id, "a call configurada nao existe mais ou nao e uma call de voz")
+            self._kick_auto_log_warning(guild.id, t('a call configurada nao existe mais ou nao e uma call de voz'))
             return False
 
         server = self.registry.get_server(settings["wl"].get("server_id", "default"))
         missing = describe_missing_rcon(server)
         if missing:
             self._clear_kick_auto_state(guild.id)
-            self._kick_auto_log_warning(guild.id, f"RCON incompleto: {', '.join(missing)}")
+            self._kick_auto_log_warning(guild.id, ''.join((format(t('RCON incompleto: '), ''), format(', '.join(missing), ''))))
             return False
 
         rcon = server["rcon"]
@@ -2152,13 +2182,13 @@ class ManguaduBot(discord.Client):
         names = _parse_players_snapshot(response.output)
         if names is None:
             self._clear_kick_auto_state(guild.id)
-            self._kick_auto_log_warning(guild.id, "a resposta de `/players` nao e uma lista completa reconhecivel")
+            self._kick_auto_log_warning(guild.id, t('a resposta de `/players` nao e uma lista completa reconhecivel'))
             return False
 
         links = await asyncio.to_thread(load_player_links)
         if names and not links:
             self._clear_kick_auto_state(guild.id)
-            self._kick_auto_log_warning(guild.id, "o arquivo de vinculos PZ/Discord esta vazio ou indisponivel")
+            self._kick_auto_log_warning(guild.id, t('o arquivo de vinculos PZ/Discord esta vazio ou indisponivel'))
             return False
         links_by_name = {name.casefold(): user_id for name, user_id in links.items()}
         voice_member_ids = set(voice_channel.voice_states)
@@ -2192,7 +2222,7 @@ class ManguaduBot(discord.Client):
 
             self._kick_auto_last_attempt[player_key] = now
             call_name = clean_text(voice_channel.name)[:80]
-            reason = f"É necessário estar na call [{call_name}] para poder permanecer no servidor."
+            reason = ''.join((format(t('É necessário estar na call ['), ''), format(call_name, ''), format(t('] para poder permanecer no servidor.'), '')))
             command = f"kickuser {_quote_pz(name)} -r={_quote_pz(reason)}"
             kick_result = await send_rcon_command(rcon["host"], int(rcon["port"]), rcon["password"], command)
             if kick_result.ok:
@@ -2201,16 +2231,18 @@ class ManguaduBot(discord.Client):
                 if admin_channel:
                     try:
                         await admin_channel.send(
-                            f"Kick automático enviado para `{discord.utils.escape_markdown(name)}`: ficou 60 segundos fora de <#{voice_channel.id}>. Motivo enviado pelo PZ: {reason}",
+                            ''.join((format(t('Kick automático enviado para `'), ''), format(discord.utils.escape_markdown(name), ''), format(t('`: ficou 60 segundos fora de <#'), ''), format(voice_channel.id, ''), format(t('>. Motivo enviado pelo PZ: '), ''), format(reason, ''))),
                             allowed_mentions=discord.AllowedMentions.none(),
                         )
                     except discord.HTTPException:
                         logger.warning("Nao foi possivel registrar o kick automatico no canal admin da guild %s", guild.id)
             else:
-                self._kick_auto_log_warning(guild.id, f"falha ao expulsar {name}: {kick_result.error}")
+                self._kick_auto_log_warning(guild.id, ''.join((format(t('falha ao expulsar '), ''), format(name, ''), ': ', format(kick_result.error, ''))))
         return True
 
     async def setup_hook(self) -> None:
+        mark_command_strings(self.tree)
+        await self.tree.set_translator(HTSTranslator())
         from concurrent.futures import ThreadPoolExecutor
         asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=4, thread_name_prefix="pz-files"))
         self._ptero_session = aiohttp.ClientSession(
@@ -2333,12 +2365,14 @@ class ManguaduBot(discord.Client):
         if guild_id:
             endpoints.append(endpoint + f"/guilds/{guild_id}/commands")
         headers = {"Authorization": f"Bot {os.environ['DISCORD_TOKEN']}", "Content-Type": "application/json"}
-        payloads = [command.to_dict(self.tree) for command in self.tree.get_commands()]
+        mark_command_strings(self.tree)
+        translator = self.tree.translator or HTSTranslator()
+        payloads = [await command.get_translated_payload(self.tree, translator) for command in self.tree.get_commands()]
         async with aiohttp.ClientSession() as session:
             for target in endpoints:
                 async with session.put(target, json=payloads, headers=headers) as response:
                     if response.status >= 300:
-                        raise RuntimeError(f"Falha ao sincronizar comandos Python: HTTP {response.status}: {(await response.text())[:500]}")
+                        raise RuntimeError(''.join((format(t('Falha ao sincronizar comandos Python: HTTP '), ''), format(response.status, ''), ': ', format((await response.text())[:500], ''))))
         logger.info("%d comandos Python sincronizados globalmente", len(payloads))
 
     async def _updater_admin_guard(self, interaction: discord.Interaction) -> bool:
@@ -2347,7 +2381,7 @@ class ManguaduBot(discord.Client):
         if app.team:
             owners.add(app.team.owner_id)
         if interaction.user.id not in owners:
-            await interaction.response.send_message("A atualização desta instância compartilhada é restrita ao proprietário do aplicativo Discord.", ephemeral=True)
+            await interaction.response.send_message(t('A atualização desta instância compartilhada é restrita ao proprietário do aplicativo Discord.'), ephemeral=True)
             return False
         return True
 
@@ -2382,12 +2416,12 @@ class ManguaduBot(discord.Client):
                     continue
                 if not check.get("hasUpdate"):
                     continue
-                await self._notify_updater(f"[BOT] Atualizacao Python encontrada: {check['local'][:7]} -> {check['remote'][:7]}.")
+                await self._notify_updater(''.join((format(t('[BOT] Atualizacao Python encontrada: '), ''), format(check['local'][:7], ''), ' -> ', format(check['remote'][:7], ''), '.')))
                 result = await self.updater.update(skip_restart=True)
                 if not result["ok"]:
-                    await self._notify_updater("[BOT] Auto-update falhou.\n" + str(result.get("error") or result.get("output") or "Sem detalhes.")[:1000])
+                    await self._notify_updater(t('[BOT] Auto-update falhou.\n') + str(result.get("error") or result.get("output") or t('Sem detalhes.'))[:1000])
                     continue
-                await self._notify_updater("[BOT] Auto-update concluido. Reiniciando o bot.")
+                await self._notify_updater(t('[BOT] Auto-update concluido. Reiniciando o bot.'))
                 asyncio.create_task(self._restart_pm2())
                 return
             except asyncio.CancelledError:
@@ -2409,25 +2443,25 @@ class ManguaduBot(discord.Client):
             return
         expected = "APAGAR_TUDO" if kind == "global" else "APAGAR"
         if not dry_run and clean_text(confirmation).upper() != expected:
-            await interaction.response.send_message(f"Confirmação inválida. Digite exatamente {expected}.", ephemeral=True)
+            await interaction.response.send_message(''.join((format(t('Confirmação inválida. Digite exatamente '), ''), format(expected, ''), '.')), ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         plan = await build_wipe_plan(kind, target, force=True if kind == "global" else force, data=self.pz_data)
         if not plan.get("ok"):
-            await interaction.followup.send(str(plan.get("error", "Falha ao planejar o wipe."))[:1900], ephemeral=True)
+            await interaction.followup.send(str(plan.get("error", t('Falha ao planejar o wipe.')))[:1900], ephemeral=True)
             return
         if dry_run:
-            await interaction.followup.send("SIMULAÇÃO, nada foi apagado.\n```\n" + format_wipe_plan(plan)[:1750] + "\n```", ephemeral=True)
+            await interaction.followup.send(t('SIMULAÇÃO, nada foi apagado.\n```\n') + format_wipe_plan(plan)[:1750] + "\n```", ephemeral=True)
             return
-        await interaction.followup.send(f"Plano validado para {len(plan['files'])} arquivo(s). Criando backup antes do wipe; isso pode levar alguns minutos.", ephemeral=True)
+        await interaction.followup.send(''.join((format(t('Plano validado para '), ''), format(len(plan['files']), ''), format(t(' arquivo(s). Criando backup antes do wipe; isso pode levar alguns minutos.'), ''))), ephemeral=True)
         result = await execute_wipe_plan(plan)
         if result.get("ok"):
             backup = result.get("backup") or {}
-            message = f"Wipe concluído: {len(result.get('deleted', []))} arquivo(s) apagados. Backup: {backup.get('uuid', 'sem identificador')}."
+            message = ''.join((format(t('Wipe concluído: '), ''), format(len(result.get('deleted', [])), ''), format(t(' arquivo(s) apagados. Backup: '), ''), format(backup.get('uuid', t('sem identificador')), ''), '.'))
         else:
-            message = "Wipe abortado: " + str(result.get("error", "falha desconhecida"))
+            message = t('Wipe abortado: ') + str(result.get("error", t('falha desconhecida')))
             if result.get("backup"):
-                message += f" Backup criado: {result['backup'].get('uuid', 'sem identificador')}."
+                message += ''.join((format(t(' Backup criado: '), ''), format(result['backup'].get('uuid', t('sem identificador')), ''), '.'))
         await interaction.followup.send(message[:1900], ephemeral=True)
 
     async def _console_command(self, server: dict[str, Any], command: str) -> dict[str, Any]:
@@ -2451,7 +2485,7 @@ class ManguaduBot(discord.Client):
     async def _scheduled_server_stop(self, server: dict[str, Any]) -> None:
         try:
             await asyncio.sleep(600)
-            await self._console_command(server, 'servermsg "DESLIGANDO AGORA."')
+            await self._console_command(server, "servermsg " + _quote_pz(t("DESLIGANDO AGORA.")))
             await self._console_command(server, "save")
             await asyncio.sleep(5)
             result = await manage_server(server, "stop")
@@ -2467,8 +2501,8 @@ class ManguaduBot(discord.Client):
         channel_id = config["channels"]["ticket_panel"]
         channel = guild.get_channel(channel_id) if channel_id else None
         if not isinstance(channel, discord.TextChannel):
-            raise ValueError("Selecione um canal de texto para o painel de tickets.")
-        embed = discord.Embed(title="🎫 Atendimento HTS Bot Multi servers", description="Precisa criar seu personagem e receber whitelist no Project Zomboid?\nClique em **Abrir ticket**. Um canal privado será criado para você e a equipe.", color=0x28D17C)
+            raise ValueError(t('Selecione um canal de texto para o painel de tickets.'))
+        embed = discord.Embed(title=t('🎫 Atendimento HTS Bot Multi servers'), description=t('Precisa criar seu personagem e receber whitelist no Project Zomboid?\nClique em **Abrir ticket**. Um canal privado será criado para você e a equipe.'), color=0x28D17C)
         message_id = config["ticket_panel_message_id"]
         message = None
         if message_id:
@@ -2486,11 +2520,11 @@ class ManguaduBot(discord.Client):
     async def open_ticket(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
         if guild is None:
-            await interaction.response.send_message("Tickets só funcionam no servidor Discord.", ephemeral=True)
+            await interaction.response.send_message(t('Tickets só funcionam no servidor Discord.'), ephemeral=True)
             return
         config = self.store.get_settings(guild.id)
         if interaction.message.id != config["ticket_panel_message_id"] or interaction.channel_id != config["channels"]["ticket_panel"]:
-            await interaction.response.send_message("Este painel foi substituído. Use a mensagem atual de tickets.", ephemeral=True)
+            await interaction.response.send_message(t('Este painel foi substituído. Use a mensagem atual de tickets.'), ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         async with self._ticket_locks[(guild.id, interaction.user.id)]:
@@ -2498,13 +2532,13 @@ class ManguaduBot(discord.Client):
             if existing:
                 channel = guild.get_channel(existing["channel_id"])
                 if channel:
-                    await interaction.followup.send(f"Você já tem um ticket aberto: {channel.mention}", ephemeral=True)
+                    await interaction.followup.send(''.join((format(t('Você já tem um ticket aberto: '), ''), format(channel.mention, ''))), ephemeral=True)
                     return
                 self.store.close_ticket(existing["channel_id"])
             category_id = config["ticket_category_id"]
             category = guild.get_channel(category_id) if category_id else None
             if category_id and not isinstance(category, discord.CategoryChannel):
-                await interaction.followup.send("A categoria de tickets configurada não existe mais.", ephemeral=True)
+                await interaction.followup.send(t('A categoria de tickets configurada não existe mais.'), ephemeral=True)
                 return
             bot_member = guild.me or await guild.fetch_member(self.user.id)
             overwrites = {
@@ -2515,46 +2549,46 @@ class ManguaduBot(discord.Client):
             role_id = config["admin_role_id"]
             role = guild.get_role(role_id) if role_id else None
             if role_id and role is None:
-                await interaction.followup.send("O cargo da equipe configurado não existe mais.", ephemeral=True)
+                await interaction.followup.send(t('O cargo da equipe configurado não existe mais.'), ephemeral=True)
                 return
             if role:
                 overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
             name = f"ticket-{interaction.user.id}"
             channel = None
             try:
-                channel = await guild.create_text_channel(name, category=category, overwrites=overwrites, topic=f"HTS Bot Multi servers ticket • usuário {interaction.user.id}", reason=f"Ticket aberto por {interaction.user.id}")
+                channel = await guild.create_text_channel(name, category=category, overwrites=overwrites, topic=''.join((format(t('HTS Bot Multi servers ticket • usuário '), ''), format(interaction.user.id, ''))), reason=''.join((format(t('Ticket aberto por '), ''), format(interaction.user.id, ''))))
                 self.store.create_ticket(guild.id, interaction.user.id, channel.id)
-                embed = discord.Embed(title="🎫 Seu ticket", description="Este canal é privado para você e a equipe. Use o botão abaixo para enviar seu personagem e pedir a WL.", color=0x28D17C)
+                embed = discord.Embed(title=t('🎫 Seu ticket'), description=t('Este canal é privado para você e a equipe. Use o botão abaixo para enviar seu personagem e pedir a WL.'), color=0x28D17C)
                 await channel.send(content=interaction.user.mention, embed=embed, view=TicketActionView(self), allowed_mentions=discord.AllowedMentions(users=True))
             except (discord.HTTPException, sqlite3.Error) as exc:
                 if channel:
                     try:
-                        await channel.delete(reason="Falha ao inicializar ticket")
+                        await channel.delete(reason=t('Falha ao inicializar ticket'))
                     except discord.HTTPException:
                         logger.exception("Falha ao remover ticket incompleto %s", channel.id)
                     self.store.close_ticket(channel.id)
-                await interaction.followup.send(f"Não foi possível abrir o ticket: {exc}", ephemeral=True)
+                await interaction.followup.send(''.join((format(t('Não foi possível abrir o ticket: '), ''), format(exc, ''))), ephemeral=True)
                 return
-            await interaction.followup.send(f"Ticket criado: {channel.mention}", ephemeral=True)
+            await interaction.followup.send(''.join((format(t('Ticket criado: '), ''), format(channel.mention, ''))), ephemeral=True)
 
     async def close_ticket(self, interaction: discord.Interaction) -> None:
         ticket = self.store.get_ticket(interaction.channel_id)
         if not ticket or ticket["status"] != "open":
-            await interaction.response.send_message("Este canal não é um ticket aberto.", ephemeral=True)
+            await interaction.response.send_message(t('Este canal não é um ticket aberto.'), ephemeral=True)
             return
         config = self.store.get_settings(ticket["guild_id"])
         if interaction.user.id != ticket["user_id"] and not _is_admin(interaction.user, config):
-            await interaction.response.send_message("Somente o dono ou a equipe pode fechar o ticket.", ephemeral=True)
+            await interaction.response.send_message(t('Somente o dono ou a equipe pode fechar o ticket.'), ephemeral=True)
             return
         request = self.store.get_request(interaction.channel_id)
         if request and request["status"] in ("review", "processing") and not _is_admin(interaction.user, config):
-            await interaction.response.send_message("A WL ainda está em análise. Peça à equipe para fechar este ticket.", ephemeral=True)
+            await interaction.response.send_message(t('A WL ainda está em análise. Peça à equipe para fechar este ticket.'), ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         try:
-            await interaction.channel.delete(reason=f"Ticket fechado por {interaction.user.id}")
+            await interaction.channel.delete(reason=''.join((format(t('Ticket fechado por '), ''), format(interaction.user.id, ''))))
         except discord.HTTPException:
-            await interaction.followup.send("Não consegui fechar o canal. Verifique minha permissão Gerenciar Canais.", ephemeral=True)
+            await interaction.followup.send(t('Não consegui fechar o canal. Verifique minha permissão Gerenciar Canais.'), ephemeral=True)
             return
         if request and request["status"] != "approved":
             self.store.set_request_status(interaction.channel_id, "closed")
@@ -2568,16 +2602,16 @@ class ManguaduBot(discord.Client):
                 try:
                     lore = await asyncio.to_thread(load_draft, lore)
                 except (OSError, ValueError) as exc:
-                    await interaction.followup.send("O arquivo temporario da lore expirou. Envie o .txt novamente.", ephemeral=True)
+                    await interaction.followup.send(t('O arquivo temporario da lore expirou. Envie o .txt novamente.'), ephemeral=True)
                     return
             await self._submit_whitelist_impl(interaction, ticket, username, character, lore, password_input)
 
     async def _submit_whitelist_impl(self, interaction: discord.Interaction, ticket: dict[str, Any], username: str, character: str, lore: str, password_input: str = "") -> None:
         if interaction.channel_id != ticket["channel_id"] or interaction.user.id != ticket["user_id"] or ticket["status"] != "open":
-            await interaction.followup.send("Ticket inválido ou fechado.", ephemeral=True)
+            await interaction.followup.send(t('Ticket inválido ou fechado.'), ephemeral=True)
             return
         if len(lore) > MAX_LORE_CHARS:
-            await interaction.followup.send(f"A lore excede o limite de {MAX_LORE_CHARS:,} caracteres.", ephemeral=True)
+            await interaction.followup.send(''.join((format(t('A lore excede o limite de '), ''), format(MAX_LORE_CHARS, ''.join((',',))), format(t(' caracteres.'), ''))), ephemeral=True)
             return
         try:
             adduser_command(username, password_input or "A" * 12)
@@ -2587,14 +2621,14 @@ class ManguaduBot(discord.Client):
         config = self.store.get_settings(ticket["guild_id"])
         wl = config["wl"]
         if not wl["enabled"]:
-            await interaction.followup.send("A criação de WL está pausada.", ephemeral=True)
+            await interaction.followup.send(t('A criação de WL está pausada.'), ephemeral=True)
             return
         if self.store.username_owner(ticket["guild_id"], username):
-            await interaction.followup.send("Este usuário PZ já recebeu WL por este bot.", ephemeral=True)
+            await interaction.followup.send(t('Este usuário PZ já recebeu WL por este bot.'), ephemeral=True)
             return
         existing = self.store.get_request(ticket["channel_id"])
         if existing and existing["status"] in ("review", "processing", "approved"):
-            await interaction.followup.send("Já existe um pedido de WL em andamento neste ticket.", ephemeral=True)
+            await interaction.followup.send(t('Já existe um pedido de WL em andamento neste ticket.'), ephemeral=True)
             return
         result = None
         if wl["require_lore"]:
@@ -2603,13 +2637,13 @@ class ManguaduBot(discord.Client):
             except ValueError as exc:
                 logger.error("Chave Gemini da guild %s nao pode ser descriptografada: %s", ticket["guild_id"], exc)
                 api_key = ""
-                result = LoreResult(False, 0.0, (), "A chave Gemini armazenada esta indisponivel; a equipe precisa revisar este pedido.", source="gemini_error")
+                result = LoreResult(False, 0.0, (), t('A chave Gemini armazenada esta indisponivel; a equipe precisa revisar este pedido.'), source="gemini_error")
             if api_key:
                 try:
                     result = await evaluate_lore_with_gemini(api_key, wl["lore_reference"], lore)
                 except GeminiError as exc:
                     logger.warning("Gemini indisponivel para triagem da guild %s: %s", ticket["guild_id"], exc)
-                    result = LoreResult(False, 0.0, (), f"O Gemini nao conseguiu concluir a analise ({exc}); revisao humana necessaria.", source="gemini_error")
+                    result = LoreResult(False, 0.0, (), ''.join((format(t('O Gemini nao conseguiu concluir a analise ('), ''), format(exc, ''), format(t('); revisao humana necessaria.'), ''))), source="gemini_error")
             elif result is None:
                 result = await asyncio.to_thread(evaluate_lore, wl["lore_reference"], lore, float(wl["lore_min_score"]))
         auto_ready = bool(
@@ -2634,27 +2668,27 @@ class ManguaduBot(discord.Client):
         )
         if status == "rejected":
             lore_id = config["channels"]["lore"]
-            link = f" Leia a lore em <#{lore_id}> e tente novamente." if lore_id else " Leia a lore oficial e tente novamente."
-            await interaction.followup.send(f"Sua história não passou na triagem inicial: {result.reason}{link}", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+            link = ''.join((format(t(' Leia a lore em <#'), ''), format(lore_id, ''), format(t('> e tente novamente.'), ''))) if lore_id else t(' Leia a lore oficial e tente novamente.')
+            await interaction.followup.send(''.join((format(t('Sua história não passou na triagem inicial: '), ''), format(result.reason, ''), format(link, ''))), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
             await interaction.channel.send(
-                f"<@{ticket['user_id']}>, sua WL foi recusada pela triagem: {result.reason}{link}",
+                ''.join(('<@', format(ticket['user_id'], ''), format(t('>, sua WL foi recusada pela triagem: '), ''), format(result.reason, ''), format(link, ''))),
                 allowed_mentions=discord.AllowedMentions(users=[interaction.user]),
             )
             rejected_request = self.store.get_request(ticket["channel_id"])
             await self.post_decision(interaction.guild, rejected_request, False, result.reason)
-            await self.post_audit(interaction.guild, rejected_request, "Reprovada automaticamente", result.reason)
+            await self.post_audit(interaction.guild, rejected_request, t('Reprovada automaticamente'), result.reason)
             return
         if status == "review":
-            await interaction.followup.send("Sua história foi encaminhada para revisão da equipe.", ephemeral=True)
+            await interaction.followup.send(t('Sua história foi encaminhada para revisão da equipe.'), ephemeral=True)
             await self.post_review(interaction.channel, ticket, username, character, lore, result)
-            await self.post_audit(interaction.guild, self.store.get_request(ticket["channel_id"]), "Em revisão", result.reason if result else "Lore não exigida.")
+            await self.post_audit(interaction.guild, self.store.get_request(ticket["channel_id"]), t('Em revisão'), result.reason if result else t('Lore não exigida.'))
             return
         await self.post_review(interaction.channel, ticket, username, character, lore, result)
         feedback = await self.issue_whitelist(interaction.channel, ticket["channel_id"])
         updated_request = self.store.get_request(ticket["channel_id"])
         if updated_request["status"] == "approved":
-            await self.post_decision(interaction.guild, updated_request, True, result.reason if result else "Lore não exigida pela configuração.")
-        await self.post_audit(interaction.guild, updated_request, "Aprovação automática" if updated_request["status"] == "approved" else "Falha na criação automática", (result.reason if result else "Lore não exigida.") if updated_request["status"] == "approved" else feedback)
+            await self.post_decision(interaction.guild, updated_request, True, result.reason if result else t('Lore não exigida pela configuração.'))
+        await self.post_audit(interaction.guild, updated_request, t('Aprovação automática') if updated_request["status"] == "approved" else t('Falha na criação automática'), (result.reason if result else t('Lore não exigida.')) if updated_request["status"] == "approved" else feedback)
         await interaction.followup.send(feedback, ephemeral=True)
 
     async def post_decision(self, guild: discord.Guild, request: dict[str, Any], approved: bool, reason: str) -> None:
@@ -2664,18 +2698,18 @@ class ManguaduBot(discord.Client):
         if not channel:
             logger.warning("Canal de decisões da WL ausente na guild %s", guild.id)
             return
-        embed = discord.Embed(title="✅ WL aprovada" if approved else "❌ WL reprovada", color=0x28D17C if approved else 0xD84A4A)
+        embed = discord.Embed(title=t('✅ WL aprovada') if approved else t('❌ WL reprovada'), color=0x28D17C if approved else 0xD84A4A)
         embed.add_field(name="Jogador", value=f"<@{request['user_id']}> • `{request['username']}`", inline=False)
-        embed.add_field(name="Personagem", value=discord.utils.escape_markdown(request["character_name"]), inline=False)
-        embed.add_field(name="Motivo", value=reason[:1000], inline=False)
+        embed.add_field(name=t('Personagem'), value=discord.utils.escape_markdown(request["character_name"]), inline=False)
+        embed.add_field(name=t('Motivo'), value=reason[:1000], inline=False)
         if config["wl"]["require_lore"]:
             triage = LoreResult.from_payload(request.get("triage")) or evaluate_lore(config["wl"]["lore_reference"], request.get("lore", ""), float(config["wl"]["lore_min_score"]))
-            embed.add_field(name="Coerências encontradas", value=", ".join(triage.common_terms[:15]) or "Nenhuma", inline=False)
+            embed.add_field(name=t('Coerências encontradas'), value=", ".join(triage.common_terms[:15]) or t('Nenhuma'), inline=False)
             if triage.summary:
-                embed.add_field(name="Resumo da análise", value=triage.summary[:900], inline=False)
+                embed.add_field(name=t('Resumo da análise'), value=triage.summary[:900], inline=False)
             if triage.contradictions:
-                embed.add_field(name="Possíveis contradições", value="\n".join(triage.contradictions)[:900], inline=False)
-        embed.add_field(name="Ticket", value=f"<#{request['channel_id']}>")
+                embed.add_field(name=t('Possíveis contradições'), value="\n".join(triage.contradictions)[:900], inline=False)
+        embed.add_field(name=t('Ticket'), value=f"<#{request['channel_id']}>")
         try:
             await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException:
@@ -2690,19 +2724,19 @@ class ManguaduBot(discord.Client):
             return
         reference = config["wl"]["lore_reference"]
         result = (LoreResult.from_payload(request.get("triage")) or evaluate_lore(reference, request["lore"], float(config["wl"]["lore_min_score"]))) if config["wl"]["require_lore"] else None
-        embed = discord.Embed(title=f"📋 WL: {decision}", color=0x28D17C if request["status"] == "approved" else 0xE8B44B)
-        embed.add_field(name="Candidato", value=f"<@{request['user_id']}> • `{request['username']}`", inline=False)
-        embed.add_field(name="Personagem", value=discord.utils.escape_markdown(request["character_name"]), inline=False)
-        embed.add_field(name="Motivo", value=reason[:900], inline=False)
+        embed = discord.Embed(title=''.join((format(t('📋 WL: '), ''), format(decision, ''))), color=0x28D17C if request["status"] == "approved" else 0xE8B44B)
+        embed.add_field(name=t('Candidato'), value=f"<@{request['user_id']}> • `{request['username']}`", inline=False)
+        embed.add_field(name=t('Personagem'), value=discord.utils.escape_markdown(request["character_name"]), inline=False)
+        embed.add_field(name=t('Motivo'), value=reason[:900], inline=False)
         if result:
-            embed.add_field(name="Coerências detectadas", value=", ".join(result.common_terms[:20]) or "Nenhuma", inline=False)
-            embed.add_field(name="Confiança da triagem", value=f"{result.score:.0%} ({'Gemini' if result.source == 'gemini' else 'local'})")
+            embed.add_field(name=t('Coerências detectadas'), value=", ".join(result.common_terms[:20]) or t('Nenhuma'), inline=False)
+            embed.add_field(name=t('Confiança da triagem'), value=f"{result.score:.0%} ({'Gemini' if result.source == 'gemini' else 'local'})")
             if result.summary:
-                embed.add_field(name="Resumo da análise", value=result.summary[:900], inline=False)
+                embed.add_field(name=t('Resumo da análise'), value=result.summary[:900], inline=False)
             if result.contradictions:
-                embed.add_field(name="Contradições apontadas", value="\n".join(result.contradictions)[:900], inline=False)
-        embed.add_field(name="Resumo da lore enviada", value=(request["lore"][:900] + "…") if len(request["lore"]) > 900 else request["lore"] or "Não informada", inline=False)
-        embed.add_field(name="Ticket", value=f"<#{request['channel_id']}>")
+                embed.add_field(name=t('Contradições apontadas'), value="\n".join(result.contradictions)[:900], inline=False)
+        embed.add_field(name=t('Resumo da lore enviada'), value=(request["lore"][:900] + "…") if len(request["lore"]) > 900 else request["lore"] or t('Não informada'), inline=False)
+        embed.add_field(name=t('Ticket'), value=f"<#{request['channel_id']}>")
         lore_files: list[discord.File] = []
         lore = request.get("lore", "")
         if request.get("status") == "approved" and lore:
@@ -2714,9 +2748,9 @@ class ManguaduBot(discord.Client):
                     getattr(guild, "filesize_limit", MAX_LORE_UPLOAD_BYTES),
                 )
             except ValueError as exc:
-                embed.add_field(name="Arquivo da lore", value=f"Não foi possível anexar automaticamente: {exc}", inline=False)
+                embed.add_field(name=t('Arquivo da lore'), value=''.join((format(t('Não foi possível anexar automaticamente: '), ''), format(exc, ''))), inline=False)
         elif request.get("status") == "approved":
-            embed.add_field(name="Arquivo da lore", value="Este pedido foi aprovado sem envio de uma lore.", inline=False)
+            embed.add_field(name=t('Arquivo da lore'), value=t('Este pedido foi aprovado sem envio de uma lore.'), inline=False)
         audit_sent = False
         try:
             if lore_files:
@@ -2726,7 +2760,7 @@ class ManguaduBot(discord.Client):
             audit_sent = True
             for index, file in enumerate(lore_files[1:], start=2):
                 await channel.send(
-                    content=f"Continuação da lore de `{discord.utils.escape_markdown(request['username'])}`: parte {index} de {len(lore_files)}.",
+                    content=''.join((format(t('Continuação da lore de `'), ''), format(discord.utils.escape_markdown(request['username']), ''), format(t('`: parte '), ''), format(index, ''), format(t(' de '), ''), format(len(lore_files), ''), '.')),
                     file=file,
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
@@ -2735,32 +2769,32 @@ class ManguaduBot(discord.Client):
             for file in lore_files:
                 file.close()
             if lore_files:
-                note = "O Discord recusou um dos anexos da lore. Use `/wl puxar_lore` para tentar baixar o arquivo novamente."
+                note = t('O Discord recusou um dos anexos da lore. Use `/wl puxar_lore` para tentar baixar o arquivo novamente.')
                 if audit_sent:
                     try:
                         await channel.send(note, allowed_mentions=discord.AllowedMentions.none())
                     except discord.HTTPException:
                         logger.exception("Falha ao informar erro no anexo de auditoria da WL na guild %s", guild.id)
                 else:
-                    embed.add_field(name="Arquivo da lore", value=note, inline=False)
+                    embed.add_field(name=t('Arquivo da lore'), value=note, inline=False)
                     try:
                         await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
                     except discord.HTTPException:
                         logger.exception("Falha ao publicar auditoria de WL sem o arquivo na guild %s", guild.id)
 
     async def post_review(self, channel: discord.TextChannel, ticket: dict[str, Any], username: str, character: str, lore: str, result: Any) -> None:
-        embed = discord.Embed(title="📋 Pedido de whitelist", color=0xE8B44B if result and not result.approved else 0x28D17C)
-        embed.add_field(name="Usuário PZ", value=discord.utils.escape_markdown(username))
-        embed.add_field(name="Personagem", value=discord.utils.escape_markdown(character))
-        embed.add_field(name="Triagem", value=f"{result.reason} (pontuação {result.score:.0%})" if result else "Lore não exigida", inline=False)
+        embed = discord.Embed(title=t('📋 Pedido de whitelist'), color=0xE8B44B if result and not result.approved else 0x28D17C)
+        embed.add_field(name=t('Usuário PZ'), value=discord.utils.escape_markdown(username))
+        embed.add_field(name=t('Personagem'), value=discord.utils.escape_markdown(character))
+        embed.add_field(name=t('Triagem'), value=''.join((format(result.reason, ''), format(t(' (pontuação '), ''), format(result.score, ''.join(('.0%',))), ')')) if result else t('Lore não exigida'), inline=False)
         if result and result.decision:
-            suggested = {"approve": "Aprovar", "review": "Revisar manualmente", "reject": "Reprovar"}.get(result.decision, "Revisar manualmente")
-            embed.add_field(name="Sugestão do Gemini", value=suggested)
+            suggested = {"approve": t('Aprovar'), "review": t('Revisar manualmente'), "reject": t('Reprovar')}.get(result.decision, t('Revisar manualmente'))
+            embed.add_field(name=t('Sugestão do Gemini'), value=suggested)
         if result and result.summary:
-            embed.add_field(name="Resumo da análise", value=result.summary[:900], inline=False)
+            embed.add_field(name=t('Resumo da análise'), value=result.summary[:900], inline=False)
         if result and result.contradictions:
-            embed.add_field(name="Contradições possíveis", value="\n".join(result.contradictions)[:900], inline=False)
-        embed.add_field(name="História", value=lore[:1000] or "Não informada", inline=False)
+            embed.add_field(name=t('Contradições possíveis'), value="\n".join(result.contradictions)[:900], inline=False)
+        embed.add_field(name=t('História'), value=lore[:1000] or t('Não informada'), inline=False)
         role_id = self.store.get_settings(ticket["guild_id"])["admin_role_id"]
         mention = f"<@&{role_id}>" if role_id else ""
         await channel.send(content=mention or None, embed=embed, view=ReviewView(self), allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False))
@@ -2769,36 +2803,36 @@ class ManguaduBot(discord.Client):
         async with self._wl_locks[channel_id]:
             request = self.store.get_request(channel_id)
             if not request or request["status"] not in ("pending", "review", "failed"):
-                return "Não há pedido pendente neste ticket."
+                return t('Não há pedido pendente neste ticket.')
             if self.store.username_owner(request["guild_id"], request["username"]):
-                return "Este usuário PZ já recebeu WL por este bot."
+                return t('Este usuário PZ já recebeu WL por este bot.')
             config = self.store.get_settings(request["guild_id"])
             server = self.registry.get_server(config["wl"]["server_id"])
             missing = describe_missing_rcon(server)
             if missing:
                 self.store.set_request_status(channel_id, "failed")
-                return f"RCON incompleto para este servidor: {', '.join(missing)}. Configure os segredos na VM."
+                return ''.join((format(t('RCON incompleto para este servidor: '), ''), format(', '.join(missing), ''), format(t('. Configure os segredos na VM.'), '')))
             secret = getenv("WL_ENCRYPTION_KEY") or getenv("DISCORD_TOKEN", "")
             try:
                 password = decrypt_password(request["password_ciphertext"], secret) if request["password_ciphertext"] else generate_password()
             except (InvalidToken, ValueError):
                 self.store.set_request_status(channel_id, "failed")
-                return "Não foi possível recuperar a senha informada. Peça ao jogador para reenviar o pedido."
+                return t('Não foi possível recuperar a senha informada. Peça ao jogador para reenviar o pedido.')
             command = adduser_command(request["username"], password)
             self.store.set_request_status(channel_id, "processing")
             result = await send_rcon_command(server["rcon"]["host"], int(server["rcon"]["port"]), server["rcon"]["password"], command)
             if not result.ok or any(word in result.output.casefold() for word in ("unknown command", "already exists", "error", "failed", "invalid", "já existe", "ja existe", "erro", "falha")):
                 self.store.set_request_status(channel_id, "failed")
-                detail = result.error or result.output or "Resposta de falha do servidor."
-                await channel.send(f"A WL de `{request['username']}` não foi confirmada pelo RCON. Equipe: verifique o servidor. Detalhe: {discord.utils.escape_markdown(detail[:500])}")
-                return "Falha ao criar a WL. A equipe foi avisada neste ticket."
+                detail = result.error or result.output or t('Resposta de falha do servidor.')
+                await channel.send(''.join((format(t('A WL de `'), ''), format(request['username'], ''), format(t('` não foi confirmada pelo RCON. Equipe: verifique o servidor. Detalhe: '), ''), format(discord.utils.escape_markdown(detail[:500]), ''))))
+                return t('Falha ao criar a WL. A equipe foi avisada neste ticket.')
             try:
                 self.store.record_whitelist(request["guild_id"], request["username"], request["user_id"], channel_id)
                 self.store.set_request_status(channel_id, "approved")
                 self.store.clear_request_password(channel_id)
             except sqlite3.IntegrityError:
                 self.store.set_request_status(channel_id, "failed")
-                return "O comando foi enviado, mas houve conflito no registro local. A equipe deve verificar a WL no PZ."
+                return t('O comando foi enviado, mas houve conflito no registro local. A equipe deve verificar a WL no PZ.')
             guild = channel.guild
             member = guild.get_member(request["user_id"])
             if member is None:
@@ -2806,7 +2840,7 @@ class ManguaduBot(discord.Client):
                     member = await guild.fetch_member(request["user_id"])
                 except discord.HTTPException:
                     member = None
-            credentials = f"Sua WL foi aprovada!\nUsuário PZ: `{request['username']}`\nSenha inicial: `{password}`\nGuarde a senha e não a compartilhe."
+            credentials = ''.join((format(t('Sua WL foi aprovada!\nUsuário PZ: `'), ''), format(request['username'], ''), format(t('`\nSenha inicial: `'), ''), format(password, ''), format(t('`\nGuarde a senha e não a compartilhe.'), '')))
             delivered = False
             if member:
                 try:
@@ -2816,8 +2850,8 @@ class ManguaduBot(discord.Client):
                     pass
             if not delivered:
                 await channel.send(f"<@{request['user_id']}> {credentials}", allowed_mentions=discord.AllowedMentions(users=True))
-            await channel.send(f"✅ WL criada para `{request['username']}`. Credenciais enviadas {'por DM' if delivered else 'neste ticket privado'}.")
-            return "WL criada com sucesso. Confira as credenciais na DM ou neste ticket privado."
+            await channel.send(''.join((format(t('✅ WL criada para `'), ''), format(request['username'], ''), format(t('`. Credenciais enviadas '), ''), format(t('por DM') if delivered else t('neste ticket privado'), ''), '.')))
+            return t('WL criada com sucesso. Confira as credenciais na DM ou neste ticket privado.')
 
     async def on_error(self, event_method: str, *args: Any, **kwargs: Any) -> None:
         logger.exception("Erro no evento Discord %s", event_method)

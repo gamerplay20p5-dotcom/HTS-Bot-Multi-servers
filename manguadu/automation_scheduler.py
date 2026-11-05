@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t, language
+
 from .tenant_scope import getenv
 
 import asyncio
@@ -28,11 +30,18 @@ DEFAULT_BACKUP_KEEP = 5
 DEFAULT_GRACE_MINUTES = 5
 BACKUP_PREFIX = "Bot automatico - "
 ACTION_LABELS = {
-    "start": "Ligar servidor", "stop": "Desligar servidor", "restart": "Reiniciar servidor",
-    "backup": "Criar backup", "save": "Salvar mundo", "command": "Comando do console",
+    "start": 'Ligar servidor', "stop": 'Desligar servidor', "restart": 'Reiniciar servidor',
+    "backup": 'Criar backup', "save": 'Salvar mundo', "command": 'Comando do console',
 }
 DAY_LABELS = ["dom", "seg", "ter", "qua", "qui", "sex", "sab"]
 DAY_DISPLAY_LABELS = ["1-dom", "2-seg", "3-ter", "4-qua", "5-qui", "6-sex", "7-sab"]
+EN_DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+def display_day(day: int, *, numbered: bool = True) -> str:
+    if language() == "en":
+        return f"{day + 1}-{EN_DAY_LABELS[day]}" if numbered else EN_DAY_LABELS[day]
+    return DAY_DISPLAY_LABELS[day] if numbered else DAY_LABELS[day]
+
 DAY_ALIASES = {
     "domingo": 0, "dom": 0, "sun": 0, "sunday": 0,
     "segunda": 1, "seg": 1, "mon": 1, "monday": 1,
@@ -81,11 +90,11 @@ def normalize_time(value: object) -> str:
 
 def parse_days(value: object) -> list[int]:
     normalized = _strip_accents(value).lower()
-    if not normalized or re.search(r"\b(todo|todos|diario|diaria|daily)\b", normalized):
+    if not normalized or re.search(r"\b(todo|todos|diario|diaria|daily|all)\b", normalized):
         return list(range(7))
     if re.search(r"\b(uteis|util|weekday|weekdays)\b", normalized):
         return [1, 2, 3, 4, 5]
-    if re.search(r"\b(fim|fds|weekend)\b", normalized):
+    if re.search(r"\b(fim|fds|weekend|weekends)\b", normalized):
         return [0, 6]
     result = set()
     for token in re.split(r"[\s,;|/]+", normalized):
@@ -100,10 +109,10 @@ def parse_days(value: object) -> list[int]:
 
 def format_days(days: list[int]) -> str:
     normalized = sorted(set(days))
-    if len(normalized) == 7: return "todos os dias (1-7)"
-    if normalized == [1, 2, 3, 4, 5]: return "dias úteis (2-6)"
-    if normalized == [0, 6]: return "fim de semana (1,7)"
-    return ", ".join(DAY_DISPLAY_LABELS[day] for day in normalized if 0 <= day <= 6) or "sem dias"
+    if len(normalized) == 7: return t('todos os dias (1-7)')
+    if normalized == [1, 2, 3, 4, 5]: return t('dias úteis (2-6)')
+    if normalized == [0, 6]: return t('fim de semana (1,7)')
+    return ", ".join(display_day(day) for day in normalized if 0 <= day <= 6) or t('sem dias')
 
 
 def _normalize(raw: Any) -> dict | None:
@@ -149,11 +158,11 @@ class AutomationScheduler:
     def create(self, action: str, time_value: str, days: str = "", command: str = "", retain_backups: int | None = None) -> dict:
         action = clean_text(action).lower()
         normalized_time, normalized_days = normalize_time(time_value), parse_days(days)
-        if action not in ACTION_LABELS: return {"ok": False, "error": "Tipo de automação inválido."}
-        if not normalized_time: return {"ok": False, "error": "Horário inválido. Use HH:MM, por exemplo 03:30."}
-        if not normalized_days: return {"ok": False, "error": "Dias inválidos. Use todos, úteis, fds ou números de 1 a 7 (1=domingo)."}
+        if action not in ACTION_LABELS: return {"ok": False, "error": t('Tipo de automação inválido.')}
+        if not normalized_time: return {"ok": False, "error": t('Horário inválido. Use HH:MM, por exemplo 03:30.')}
+        if not normalized_days: return {"ok": False, "error": t('Dias inválidos. Use todos, úteis, fds ou números de 1 a 7 (1=domingo).')}
         command = clean_text(command)
-        if action == "command" and not command: return {"ok": False, "error": "Informe o comando do console para automação do tipo comando."}
+        if action == "command" and not command: return {"ok": False, "error": t('Informe o comando do console para automação do tipo comando.')}
         now = datetime.now(timezone.utc).isoformat()
         automation = {
             "id": f"{int(datetime.now(timezone.utc).timestamp() * 1000):x}-{secrets.token_hex(2)}",
@@ -198,7 +207,7 @@ class AutomationScheduler:
             day = parts["now"].date() + timedelta(days=offset)
             weekday = (day.weekday() + 1) % 7
             if weekday not in automation["days"] or (offset == 0 and scheduled < parts["totalMinutes"]): continue
-            return {"dateKey": day.isoformat(), "time": automation["time"], "weekday": weekday, "weekdayLabel": DAY_DISPLAY_LABELS[weekday]}
+            return {"dateKey": day.isoformat(), "time": automation["time"], "weekday": weekday, "weekdayLabel": display_day(weekday)}
         return None
 
     async def _prune_backups(self, server: dict, keep: int) -> dict:
@@ -226,13 +235,13 @@ class AutomationScheduler:
                 async with PterodactylClient(server) as client:
                     created = await client.create_backup(name, getenv("PTERO_BACKUP_IGNORED", ""))
             if not created.get("ok"):
-                return {"ok": False, "message": f"Falha ao criar backup: {error}"}
+                return {"ok": False, "message": ''.join((format(t('Falha ao criar backup: '), ''), format(error, '')))}
         pruned_after = await self._prune_backups(server, keep)
         deleted = len(pruned_before["deleted"]) + len(pruned_after["deleted"])
         if not pruned_before["ok"] or not pruned_after["ok"]:
-            return {"ok": False, "message": "Backup solicitado, mas a limpeza de backups antigos falhou."}
+            return {"ok": False, "message": t('Backup solicitado, mas a limpeza de backups antigos falhou.')}
         backup = created.get("backup") or {}
-        return {"ok": True, "message": f"Backup solicitado ({backup.get('name') or name}). Backups antigos apagados: {deleted}."}
+        return {"ok": True, "message": ''.join((format(t('Backup solicitado ('), ''), format(backup.get('name') or name, ''), format(t('). Backups antigos apagados: '), ''), format(deleted, ''), '.'))}
 
     async def execute(self, automation: dict, server: dict | None = None) -> dict:
         server = server or self.server_provider()
@@ -240,21 +249,21 @@ class AutomationScheduler:
         if action == "backup": return await self._backup(server, automation.get("retainBackups", DEFAULT_BACKUP_KEEP))
         if action == "save" or action == "command":
             command = "save" if action == "save" else clean_text(automation.get("command"))
-            if not command: return {"ok": False, "message": "Comando do console ausente."}
+            if not command: return {"ok": False, "message": t('Comando do console ausente.')}
             result = await send_server_console_command(server, command)
-            return {"ok": result.get("ok"), "message": f"Comando `{command}` enviado pelo console do Pterodactyl." if result.get("ok") else f"Falha no comando `{command}`: {extract_ptero_error(result)}"}
+            return {"ok": result.get("ok"), "message": ''.join((format(t('Comando `'), ''), format(command, ''), format(t('` enviado pelo console do Pterodactyl.'), ''))) if result.get("ok") else ''.join((format(t('Falha no comando `'), ''), format(command, ''), '`: ', format(extract_ptero_error(result), '')))}
         last = None
         for attempt in range(1, 3):
             last = await manage_server(server, action)
             if last.get("ok"):
                 via = "Docker/local" if last.get("transport") == "docker" else "Pterodactyl"
-                return {"ok": True, "message": f"{ACTION_LABELS[action]} enviado via {via}" + (f" na tentativa {attempt}." if attempt > 1 else ".")}
+                return {"ok": True, "message": ''.join((format(t(ACTION_LABELS[action]), ''), format(t(' enviado via '), ''), format(via, ''))) + (''.join((format(t(' na tentativa '), ''), format(attempt, ''), '.')) if attempt > 1 else ".")}
             if attempt < 2: await asyncio.sleep(2)
-        return {"ok": False, "message": f"Falha ao executar {ACTION_LABELS.get(action, action)}: {extract_ptero_error(last)}"}
+        return {"ok": False, "message": ''.join((format(t('Falha ao executar '), ''), format(t(ACTION_LABELS.get(action, action)), ''), ': ', format(extract_ptero_error(last), '')))}
 
     async def run_now(self, automation_id: str) -> dict:
         automation = next((item for item in self.get_automations() if item["id"] == clean_text(automation_id)), None)
-        if not automation: return {"ok": False, "error": "Automação não encontrada."}
+        if not automation: return {"ok": False, "error": t('Automação não encontrada.')}
         result = await self.execute(automation)
         self.update(automation["id"], lastRunAt=datetime.now(timezone.utc).isoformat(), lastResult={**result, "at": datetime.now(timezone.utc).isoformat(), "manual": True})
         return {**result, "automation": automation}
@@ -276,7 +285,7 @@ class AutomationScheduler:
                 result = await self.execute(automation)
                 self.update(automation["id"], lastResult={**result, "at": datetime.now(timezone.utc).isoformat()})
                 if notify:
-                    try: await notify(f"[AUTOMAÇÃO] {'OK' if result['ok'] else 'FALHA'} {ACTION_LABELS[automation['action']]} ({automation['id']})\n{result['message']}")
+                    try: await notify(''.join((format(t('[AUTOMAÇÃO] '), ''), format('OK' if result['ok'] else t('FALHA'), ''), ' ', format(t(ACTION_LABELS[automation['action']]), ''), ' (', format(automation['id'], ''), ')\n', format(result['message'], ''))))
                     except Exception: logger.exception("Falha ao notificar execucao automatica")
         finally:
             self._running = False
@@ -285,18 +294,18 @@ class AutomationScheduler:
         return await self._backup(self.server_provider(), retain_backups or DEFAULT_BACKUP_KEEP)
 
     def format_line(self, automation: dict) -> str:
-        status = "ativa" if automation["enabled"] else "pausada"
+        status = "ativa" if automation["enabled"] else t('pausada')
         next_run = self.next_run(automation)
-        next_info = f" | próxima: {next_run['dateKey']} {next_run['time']} ({next_run['weekdayLabel']})" if next_run else ""
-        backup_info = f" | manter {automation['retainBackups']} backup(s)" if automation["action"] == "backup" else ""
+        next_info = ''.join((format(t(' | próxima: '), ''), format(next_run['dateKey'], ''), ' ', format(next_run['time'], ''), ' (', format(next_run['weekdayLabel'], ''), ')')) if next_run else ""
+        backup_info = ''.join((format(t(' | manter '), ''), format(automation['retainBackups'], ''), format(t(' backup(s)'), ''))) if automation["action"] == "backup" else ""
         command_info = f" | {automation['command']}" if automation["action"] == "command" else ""
-        last_info = f" | última: {'OK' if automation['lastResult'].get('ok') else 'FALHA'}" if automation.get("lastResult") else ""
-        return f"`{automation['id']}` {status} | {ACTION_LABELS[automation['action']]} | {automation['time']} | {format_days(automation['days'])}{next_info}{backup_info}{command_info}{last_info}"
+        last_info = ''.join((format(t(' | última: '), ''), format('OK' if automation['lastResult'].get('ok') else t('FALHA'), ''))) if automation.get("lastResult") else ""
+        return ''.join(('`', format(automation['id'], ''), '` ', format(status, ''), ' | ', format(t(ACTION_LABELS[automation['action']]), ''), ' | ', format(automation['time'], ''), ' | ', format(format_days(automation['days']), ''), format(next_info, ''), format(backup_info, ''), format(command_info, ''), format(last_info, '')))
 
     def runtime_status(self) -> dict:
         parts = self._now_parts()
-        return {"timezone": get_timezone(), "dateKey": parts["dateKey"], "timeKey": parts["timeKey"], "weekdayLabel": DAY_LABELS[parts["weekday"]], "graceMinutes": _grace_minutes(), "storeFile": str(self.path), "totalAutomations": len(self.get_automations())}
+        return {"timezone": get_timezone(), "dateKey": parts["dateKey"], "timeKey": parts["timeKey"], "weekdayLabel": display_day(parts["weekday"], numbered=False), "graceMinutes": _grace_minutes(), "storeFile": str(self.path), "totalAutomations": len(self.get_automations())}
 
     def format_list(self) -> str:
         items = self.get_automations()
-        return "\n".join(self.format_line(item) for item in items) if items else "Nenhuma automação criada ainda."
+        return "\n".join(self.format_line(item) for item in items) if items else t('Nenhuma automação criada ainda.')

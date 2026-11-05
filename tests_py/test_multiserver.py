@@ -92,6 +92,26 @@ def test_unbound_guild_cannot_fall_back_to_environment(monkeypatch):
             ServerRegistry().get_default_server()
 
 
+@pytest.mark.asyncio
+async def test_reloading_same_volume_preserves_log_cursor_and_watcher_lock(tmp_path, monkeypatch):
+    from manguadu.discord_bot import ManguaduBot
+    root = tmp_path / "volumes"
+    monkeypatch.setenv("PTERO_VOLUMES_ROOT", str(root))
+    binding = make_binding(root, 1)
+    store = ConfigStore(tmp_path / "config.sqlite3")
+    bot = ManguaduBot(store)
+    await bot.install_binding(11, binding)
+    original = bot._runtimes[11]
+    original.watcher.offsets[Path("example_chat.txt")] = 123
+    await bot.install_binding(11, {**binding, "stats_provider": "friendhost"})
+    updated = bot._runtimes[11]
+    assert updated is not original
+    assert updated.watcher is original.watcher
+    assert updated.watcher_lock is original.watcher_lock
+    assert updated.watcher.offsets[Path("example_chat.txt")] == 123
+    store.close()
+
+
 def test_volume_can_only_belong_to_one_discord(tmp_path):
     store = ConfigStore(tmp_path / "config.sqlite3")
     binding = {"uuid": str(uuid4()), "identifier": "test"}

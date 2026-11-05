@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -12,7 +14,11 @@ STOPWORDS = frozenset("""a ao aos as o os um uma uns umas de da do das dos e em 
 por para com sem que se eu ele ela meu minha seu sua seus suas era foi ser ter tinha
 ha havia muito mais menos depois antes quando onde porque como sobre tambem ate
 esse essa isso este esta isto eles elas num numa pelo pela pelos pelas entre
-durante ainda ja nao sim ou mas so sua seu nossa nosso minha meu""".split())
+durante ainda ja nao sim ou mas so sua seu nossa nosso minha meu
+the a an and or but in on at of to from for with without that this these those
+my your his her their our was were is are been being have has had would could
+should will shall then than when where what which who whom because after before
+about into over under through some any much many more most very also until""".split())
 
 
 def normalize_tokens(text: str) -> set[str]:
@@ -102,7 +108,7 @@ def select_relevant_context(source: str, query: str, limit: int = LORE_CONTEXT_C
     if not best:
         return _uniform_sample(source, limit)
     selected = sorted(((-offset, chunk) for _score, offset, chunk in best), key=lambda item: item[0])
-    return "\n\n[...trecho selecionado da lore...]\n\n".join(chunk for _offset, chunk in selected)[:limit]
+    return t('\n\n[...trecho selecionado da lore...]\n\n').join(chunk for _offset, chunk in selected)[:limit]
 
 
 def _uniform_sample(source: str, limit: int) -> str:
@@ -112,23 +118,23 @@ def _uniform_sample(source: str, limit: int) -> str:
     segment_size = max(1, limit // segment_count)
     last_start = max(0, len(source) - segment_size)
     offsets = [round(last_start * index / max(1, segment_count - 1)) for index in range(segment_count)]
-    return "\n\n[...trecho omitido...]\n\n".join(source[offset:offset + segment_size] for offset in offsets)[:limit]
+    return t('\n\n[...trecho omitido...]\n\n').join(source[offset:offset + segment_size] for offset in offsets)[:limit]
 
 
 def evaluate_lore(reference: str, submission: str, minimum_score: float = 0.28) -> LoreResult:
     reference = select_relevant_context(reference, submission)
     submission = select_relevant_context(submission, reference)
     if len(submission.strip()) < 120:
-        return LoreResult(False, 0.0, (), "A história precisa ter pelo menos 120 caracteres.")
+        return LoreResult(False, 0.0, (), t('A história precisa ter pelo menos 120 caracteres.'))
     reference_tokens = normalize_tokens(reference)
     submission_tokens = normalize_tokens(submission)
     if len(reference_tokens) < 8:
-        return LoreResult(False, 0.0, (), "A lore base ainda precisa de mais detalhes para a triagem automática.")
+        return LoreResult(False, 0.0, (), t('A lore base ainda precisa de mais detalhes para a triagem automática.'))
     if len(submission_tokens) < 12:
-        return LoreResult(False, 0.0, (), "Descreva melhor a história do personagem.")
+        return LoreResult(False, 0.0, (), t('Descreva melhor a história do personagem.'))
     common = reference_tokens & submission_tokens
     # Cobertura de termos da lore base e uma medida verificavel, mas lexical.
     score = len(common) / len(reference_tokens)
     approved = len(common) >= 3 and score >= minimum_score
-    reason = "A lore passou na triagem de consistência." if approved else "A história não traz referências suficientes à lore base."
+    reason = t('A lore passou na triagem de consistência.') if approved else t('A história não traz referências suficientes à lore base.')
     return LoreResult(approved, round(score, 3), tuple(sorted(common)), reason)

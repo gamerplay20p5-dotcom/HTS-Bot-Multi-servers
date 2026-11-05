@@ -12,12 +12,15 @@ O pacote Python ainda se chama `manguadu` para preservar o comando de inicializa
 
 ## O que o bot faz
 
+- **Comunidades PT/EN:** `/language` ou **Idioma / Language** em `/config` e `/config_bot` salva português ou inglês por Discord. Painéis, formulários, respostas e avisos novos seguem o idioma escolhido. O menu de slash commands usa o idioma do aplicativo Discord do usuário, com nomes, descrições, opções e parâmetros localizados. Não há tradução por IA a cada mensagem.
+
 - **Configuração no Discord:** `/config_bot` abre uma interface administrativa por servidor Discord para canais, equipe, categoria de tickets e regras da WL. `/config_api` recebe e testa a chave Gemini por um painel privado. A chave Pterodactyl fica no dedicado; a senha RCON vem do INI do volume vinculado.
 - **Tickets e whitelist:** cria canais privados, coleta personagem, senha opcional e lore, permite revisão manual ou triagem automática e executa `adduser` via RCON. Senhas ausentes são geradas pelo bot. Aprovações e reprovações, com motivos, são publicadas no canal de decisões configurado; o resultado não é enviado ao chat do jogo. Credenciais são entregues por DM ou no ticket privado.
 - **Controle RP por voz:** `/config_kick_automatico` exige uma call Discord configurada para jogadores online. A cada 10 segundos, compara `/players` do PZ com os vínculos de contas; quem ficar fora da call por 60 segundos recebe kick com motivo e registro no canal administrativo.
 - **Validação de lore:** com Gemini configurado, avalia coerência narrativa, cronologia e contradições, produzindo resumo e evidências para a equipe. Sem chave, usa a triagem lexical local. Textos longos podem ser importados em `.txt` até 9.999.999 caracteres; ficam comprimidos no SQLite e apenas trechos limitados são enviados ao modelo.
 - **Administração PZ:** consulta jogadores, ficha, skills, traits, safehouses, arquivos e logs; oferece operações administrativas, RCON, controle do servidor, backups e ferramentas de wipe com verificações de segurança.
 - **FriendHost e anticheat:** lê arquivos de dados do mod, produz status e rankings, acompanha evoluções e mortes, espelha eventos de chat/login/logout e encaminha alertas do PZAntiCheat.
+- **TTF Stats MP e descoberta:** `/config` busca servidores Pterodactyl pelo nome, detecta ID/UUID e pasta Lua e conclui o vínculo por arquivo quando o proprietário do aplicativo autorizou a comunidade. O provedor TTF lê personagens vivos/mortos e rankings históricos por conta ou personagem; fontes diferentes nunca são somadas. [Guia PT/EN de configuração, métricas e segurança](docs/SERVER_SETUP.pt-en.md).
 - **Painéis e rotinas:** monta painéis de status e ranking, relaciona nomes PZ a membros Discord, personaliza imagens/temas e agenda tarefas de servidor.
 - **Operação e atualização:** resolve os caminhos dentro do volume Wings validado e atualiza o checkout Python pelo comando `/bot atualizar` ou pelo agendador opcional. O grupo `/bot` é restrito ao proprietário do aplicativo Discord porque afeta a instância compartilhada.
 
@@ -55,10 +58,10 @@ python -m manguadu --bot       # inicia o bot Discord
 ## Primeira configuração no Discord
 
 1. Convide o bot com permissões para ver canais, enviar mensagens, anexar arquivos no canal de auditoria, gerenciar canais e usar comandos de aplicação. Habilite os intents necessários no Developer Portal se a configuração do aplicativo exigir.
-2. Execute `/config` como administrador, cadastre o ID/UUID e valide o código no arquivo do servidor. Depois escolha canais, categoria de tickets, cargo da equipe e opções da WL em `/config_bot`.
+2. Execute `/config` → **Procurar servidores**. O proprietário do aplicativo seleciona o servidor e autoriza o Discord; depois o administrador da comunidade seleciona o servidor permitido, verifica a pasta Lua e conclui o vínculo automático. O cadastro manual por prova de arquivo continua disponível. Configure canais, tickets e WL em `/config_bot`. [Passo a passo PT/EN](docs/SERVER_SETUP.pt-en.md).
 3. Em **Config WL**, defina se a lore é obrigatória e selecione revisão manual ou automática. O servidor PZ vem do vínculo de `/config`. Para lore acima de 4.000 caracteres, use `/config_lore` com um arquivo `.txt` UTF-8 em um canal privado da equipe.
 4. Use `/config_api`, abra o Google AI Studio pelo botão do painel, crie uma chave, cole-a no modal privado e teste a conexão. A camada gratuita pode usar prompts para melhorar produtos Google; o painel informa isso antes da configuração.
-5. Configure no `.env` do dedicado a URL e a chave Pterodactyl compartilhada. ID/UUID e pasta Lua são cadastrados por Discord; o endpoint RCON fica em `/config` e a senha é lida do INI do PZ. O `.env` de servidor único só é importado para a guild legada indicada em `GUILD_ID`.
+5. Na instalação inicial, configure no `.env` do dedicado a URL e a chave Pterodactyl compartilhada. ID/UUID e pasta Lua são detectados por Discord; o endpoint RCON fica em `/config` e a senha é lida do INI do PZ. O `.env` de servidor único só é importado para a guild legada indicada em `GUILD_ID`.
 6. Vincule nomes PZ aos membros Discord com `/painel jogadores vincular`, abra `/config_kick_automatico`, escolha a call e ative a fiscalização. O bot exige RCON válido e vínculos para os jogadores que já estiverem online antes de ativar.
 7. Consulte [PZ_COMMANDS.md](PZ_COMMANDS.md) para os comandos e fluxos do servidor e [DEPLOY.md](DEPLOY.md) para o processo de produção.
 
@@ -107,6 +110,14 @@ O teste sintético local usou **25 servidores × 200 jogadores × 200 linhas his
 O teste foi executado no Windows de desenvolvimento e exclui RSS total do processo, tráfego real do Discord/Pterodactyl e carga do dedicado. Ele verifica leituras/cache/renderização locais; não garante que a produção ficará abaixo de 2,56 GB. O espelho resume mensagens em excesso, os trabalhos podem atrasar sob sobrecarga e arquivos auxiliares acima de 8 MiB exigem leitura incremental ou manutenção. Os logs completos continuam no servidor PZ.
 
 O conjunto de **60 testes automatizados** cobre também isolamento entre 25 guilds, ausência de fallback para outro cliente, validação ID/UUID/código, concorrência limitada, fila de logs independente, UTF-8 entre lotes, cursores de mortes persistidos e exportação de lore. Execute `python -m pytest -q` para conferir a versão local.
+
+## Idioma por comunidade
+
+Administradores podem executar `/language` mesmo antes de vincular o servidor PZ. Escolha **Português (Brasil)** ou **English**; a preferência fica no SQLite e é recuperada após reiniciar. O mesmo menu aparece em `/config` e `/config_bot`. Os rankings/status usam o novo idioma na próxima atualização agendada, e o painel principal de tickets já publicado é atualizado quando possível. Mensagens antigas e formulários já abertos não são reescritos.
+
+O idioma das respostas do bot é da comunidade; o idioma exibido no menu de comandos é do aplicativo Discord de cada usuário, conforme o mecanismo de localização do Discord. Por exemplo, `/painel jogadores vincular` aparece como `/panel players link`, `/servidor` como `/server`, `/automacao` como `/automation` e `/wl puxar_lore` como `/wl download_lore` para usuários com Discord em inglês. Os identificadores internos e valores de protocolo permanecem iguais. Tokens de confirmação como `APAGAR`, `EXPULSAR` e `RESTAURAR` continuam literais, com instruções traduzidas indicando o que digitar.
+
+Nomes de jogadores, servidores e facções, lore original, logs/saída bruta do jogo e textos personalizados de temas não são traduzidos automaticamente. O Gemini recebe a orientação de produzir justificativa, resumo e evidências no idioma atual. As traduções da interface usam um catálogo local versionado em `manguadu/locales/en.json`, sem chamadas adicionais de API. O idioma padrão para instalações existentes é português.
 
 ## Identidade e autoria
 

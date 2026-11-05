@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 from .tenant_scope import getenv
 
 import asyncio
@@ -61,7 +63,7 @@ async def run_local_process(command: str, args: list[str] | None = None, *, time
         return {
             "ok": process.returncode == 0, "code": process.returncode, "stdout": out, "stderr": err,
             "durationMs": int((time.monotonic() - started) * 1000),
-            "error": "" if process.returncode == 0 else clean_text(err) or f"Processo finalizou com codigo {process.returncode}.",
+            "error": "" if process.returncode == 0 else clean_text(err) or ''.join((format(t('Processo finalizou com codigo '), ''), format(process.returncode, ''), '.')),
         }
     except asyncio.TimeoutError:
         try:
@@ -69,7 +71,7 @@ async def run_local_process(command: str, args: list[str] | None = None, *, time
             await process.wait()
         except (UnboundLocalError, ProcessLookupError):
             pass
-        return {"ok": False, "code": None, "stdout": "", "stderr": "", "durationMs": int((time.monotonic() - started) * 1000), "error": f"Tempo limite excedido ({round(timeout)}s)."}
+        return {"ok": False, "code": None, "stdout": "", "stderr": "", "durationMs": int((time.monotonic() - started) * 1000), "error": ''.join((format(t('Tempo limite excedido ('), ''), format(round(timeout), ''), 's).'))}
     except OSError as exc:
         return {"ok": False, "code": None, "stdout": "", "stderr": "", "durationMs": int((time.monotonic() - started) * 1000), "error": str(exc)}
 
@@ -84,7 +86,7 @@ def parse_docker_ps_json(output: str) -> list[dict[str, str]]:
         containers.append({
             "id": clean_text(raw.get("ID")), "names": clean_text(raw.get("Names")),
             "image": clean_text(raw.get("Image")), "state": clean_text(raw.get("State")),
-            "status": clean_text(raw.get("Status")), "labels": clean_text(raw.get("Labels")),
+            "status": clean_text(raw.get(t('Status'))), "labels": clean_text(raw.get("Labels")),
             "mounts": clean_text(raw.get("Mounts")),
         })
     return containers
@@ -110,27 +112,27 @@ async def list_docker_containers() -> dict[str, Any]:
 
 async def find_docker_container() -> dict[str, Any]:
     if not is_local_fallback_enabled():
-        return {"ok": False, "error": "Fallback local/Docker desativado."}
+        return {"ok": False, "error": t('Fallback local/Docker desativado.')}
     configured = clean_text(getenv("PTERO_DOCKER_CONTAINER"))
     if configured:
         return {"ok": True, "container": {"id": configured, "names": configured, "configured": True}}
     listed = await list_docker_containers()
     if not listed["ok"]:
-        return {"ok": False, "error": listed.get("error") or clean_text(listed.get("stderr")) or "Docker indisponivel."}
+        return {"ok": False, "error": listed.get("error") or clean_text(listed.get("stderr")) or t('Docker indisponivel.')}
     ranked = [{**container, "score": score_docker_container(container)} for container in listed["containers"]]
     ranked = sorted((item for item in ranked if item["score"] > 0), key=lambda item: item["score"], reverse=True)
     if not ranked:
-        return {"ok": False, "error": "Nenhum container Docker do servidor foi encontrado."}
+        return {"ok": False, "error": t('Nenhum container Docker do servidor foi encontrado.')}
     best = [item for item in ranked if item["score"] == ranked[0]["score"]]
     if len(best) > 1:
         names = ", ".join(item["names"] or item["id"] for item in best)
-        return {"ok": False, "error": f"Mais de um container possivel: {names}. Configure PTERO_DOCKER_CONTAINER."}
+        return {"ok": False, "error": ''.join((format(t('Mais de um container possivel: '), ''), format(names, ''), format(t('. Configure PTERO_DOCKER_CONTAINER.'), '')))}
     return {"ok": True, "container": best[0]}
 
 
 def normalize_docker_state(value: str) -> str:
     state = clean_text(value).casefold()
-    return {"running": "running", "created": "offline", "exited": "offline", "dead": "offline", "restarting": "starting", "paused": "stopping"}.get(state, state or "desconhecido")
+    return {"running": "running", "created": "offline", "exited": "offline", "dead": "offline", "restarting": "starting", "paused": "stopping"}.get(state, state or t('desconhecido'))
 
 
 def _human_bytes(value: str) -> int:
@@ -164,8 +166,8 @@ async def fetch_docker_resources() -> dict[str, Any]:
         raw = json.loads(inspected["stdout"])
         state_data = (raw[0] or {}).get("State") or {}
     except (json.JSONDecodeError, IndexError, TypeError):
-        return {"ok": False, "error": "Falha ao interpretar docker inspect."}
-    state = normalize_docker_state(state_data.get("Status", ""))
+        return {"ok": False, "error": t('Falha ao interpretar docker inspect.')}
+    state = normalize_docker_state(state_data.get(t('Status'), ""))
     resources: dict[str, Any] = {}
     if state_data.get("Running"):
         stats = await run_local_process(docker, ["stats", "--no-stream", "--format", "{{json .}}", container_id], timeout=15)
@@ -194,7 +196,7 @@ async def fetch_docker_resources() -> dict[str, Any]:
 async def manage_docker_server(action: str) -> dict[str, Any]:
     normalized = clean_text(action).casefold()
     if normalized not in {"start", "stop", "restart", "kill"}:
-        return {"ok": False, "error": f"Acao local nao suportada: {action}"}
+        return {"ok": False, "error": ''.join((format(t('Acao local nao suportada: '), ''), format(action, '')))}
     container_id, found = await _container_id()
     if not container_id:
         return found

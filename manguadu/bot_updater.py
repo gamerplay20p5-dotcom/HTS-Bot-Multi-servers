@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import asyncio
 import base64
 import os
@@ -66,7 +68,7 @@ class BotUpdater:
             "scriptPath": str(self.root / "scripts" / "update_bot.py"),
             "scriptExists": (self.root / "scripts" / "update_bot.py").is_file(),
             "pm2AppName": self.app_name,
-            "pm2Runtime": "python" if self.python_runtime_configured else "nao configurado como Python",
+            "pm2Runtime": "python" if self.python_runtime_configured else t('nao configurado como Python'),
             "timeoutSeconds": self.timeout,
             "autoUpdateEnabled": self.auto_update_enabled,
             "autoUpdateIntervalMs": self.auto_update_interval_ms,
@@ -76,9 +78,9 @@ class BotUpdater:
 
     def read_last_log(self, limit: int = 1800) -> str:
         try:
-            return _truncate(self.log_file.read_text(encoding="utf-8", errors="replace"), limit) or "Ainda nao ha log de atualizacao."
+            return _truncate(self.log_file.read_text(encoding="utf-8", errors="replace"), limit) or t('Ainda nao ha log de atualizacao.')
         except OSError:
-            return "Ainda nao ha log de atualizacao."
+            return t('Ainda nao ha log de atualizacao.')
 
     def _git_environment(self) -> dict[str, str]:
         env = dict(self.environment)
@@ -106,24 +108,24 @@ class BotUpdater:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout or self.timeout)
             return ProcessResult(process.returncode == 0, process.returncode, stdout.decode("utf-8", "replace").strip(), stderr.decode("utf-8", "replace").strip())
         except asyncio.TimeoutError:
-            return ProcessResult(False, None, "", "", f"Comando excedeu o limite de {timeout or self.timeout}s.")
+            return ProcessResult(False, None, "", "", ''.join((format(t('Comando excedeu o limite de '), ''), format(timeout or self.timeout, ''), 's.')))
         except OSError as exc:
             return ProcessResult(False, None, "", "", str(exc))
 
     async def check_for_update(self) -> dict[str, Any]:
         if not (self.root / ".git").exists():
-            return {"ok": False, "error": "A pasta do bot nao e um repositorio Git."}
+            return {"ok": False, "error": t('A pasta do bot nao e um repositorio Git.')}
         git_env = self._git_environment()
         fetched = await self._run("git", "fetch", "--prune", "origin", env=git_env)
         if not fetched.ok:
-            return {"ok": False, "error": fetched.error or fetched.stderr or "git fetch falhou."}
+            return {"ok": False, "error": fetched.error or fetched.stderr or t('git fetch falhou.')}
         local = await self._run("git", "rev-parse", "HEAD")
         if not local.ok:
-            return {"ok": False, "error": local.error or local.stderr or "Nao foi possivel ler o commit local."}
+            return {"ok": False, "error": local.error or local.stderr or t('Nao foi possivel ler o commit local.')}
         branch_result = await self._run("git", "branch", "--show-current")
         branch = self.branch or branch_result.stdout
         if not branch:
-            return {"ok": False, "error": "Nao foi possivel identificar a branch."}
+            return {"ok": False, "error": t('Nao foi possivel identificar a branch.')}
         exists = await self._run("git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}")
         if not exists.ok and branch != "main":
             fallback = await self._run("git", "show-ref", "--verify", "--quiet", "refs/remotes/origin/main")
@@ -131,71 +133,71 @@ class BotUpdater:
                 branch = "main"
         remote = await self._run("git", "rev-parse", f"origin/{branch}")
         if not remote.ok:
-            return {"ok": False, "error": remote.error or remote.stderr or f"Branch remota origin/{branch} nao encontrada."}
+            return {"ok": False, "error": remote.error or remote.stderr or ''.join((format(t('Branch remota origin/'), ''), format(branch, ''), format(t(' nao encontrada.'), '')))}
         return {"ok": True, "branch": branch, "local": local.stdout, "remote": remote.stdout, "hasUpdate": local.stdout != remote.stdout}
 
     async def update(self, *, skip_restart: bool = False) -> dict[str, Any]:
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
-        lines = ["Atualizacao Python iniciada.", f"Projeto: {self.root}", f"PM2 app: {self.app_name}"]
+        lines = [t('Atualizacao Python iniciada.'), ''.join((format(t('Projeto: '), ''), format(self.root, ''))), f"PM2 app: {self.app_name}"]
 
         def finish(ok: bool, error: str = "") -> dict[str, Any]:
             if error:
                 lines.append(f"ERRO: {error}")
-            lines.append("Atualizacao concluida." if ok else "Atualizacao abortada.")
+            lines.append(t('Atualizacao concluida.') if ok else t('Atualizacao abortada.'))
             self._append_log("\n".join(lines))
             return {"ok": ok, "error": error, "output": _truncate("\n".join(lines), 1800)}
 
         if not skip_restart and not self.python_runtime_configured:
-            return finish(False, "PM2 ainda nao esta configurado para executar python -m manguadu --bot. Defina BOT_PM2_RUNTIME=python depois de configurar o processo.")
+            return finish(False, t('PM2 ainda nao esta configurado para executar python -m manguadu --bot. Defina BOT_PM2_RUNTIME=python depois de configurar o processo.'))
 
         if shutil.which("git") is None:
-            return finish(False, "git nao encontrado na VM.")
+            return finish(False, t('git nao encontrado na VM.'))
         if not (self.root / ".git").exists():
-            return finish(False, "A pasta do bot nao e um repositorio Git.")
+            return finish(False, t('A pasta do bot nao e um repositorio Git.'))
         status = await self._run("git", "status", "--porcelain", "--untracked-files=no")
         if not status.ok:
-            return finish(False, status.error or status.stderr or "Nao foi possivel verificar alteracoes locais.")
+            return finish(False, status.error or status.stderr or t('Nao foi possivel verificar alteracoes locais.'))
         if status.stdout:
-            lines.append("Alteracoes locais rastreadas detectadas; o pull foi cancelado para preservar os arquivos.")
-            return finish(False, "Existem alteracoes locais rastreadas na VM.")
+            lines.append(t('Alteracoes locais rastreadas detectadas; o pull foi cancelado para preservar os arquivos.'))
+            return finish(False, t('Existem alteracoes locais rastreadas na VM.'))
         current = await self._run("git", "rev-parse", "--short", "HEAD")
-        lines.append(f"Commit atual: {current.stdout or 'desconhecido'}")
+        lines.append(''.join((format(t('Commit atual: '), ''), format(current.stdout or t('desconhecido'), ''))))
         branch = self.branch
         if not branch:
             result = await self._run("git", "branch", "--show-current")
             branch = result.stdout
         if not branch:
-            return finish(False, "Nao foi possivel identificar a branch atual.")
+            return finish(False, t('Nao foi possivel identificar a branch atual.'))
         git_env = self._git_environment()
         fetched = await self._run("git", "fetch", "--prune", "origin", env=git_env)
         if not fetched.ok:
-            return finish(False, fetched.error or fetched.stderr or "git fetch falhou; verifique o remote e as permissoes.")
+            return finish(False, fetched.error or fetched.stderr or t('git fetch falhou; verifique o remote e as permissoes.'))
         branch_check = await self._run("git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}")
         if not branch_check.ok and branch != "main":
             fallback = await self._run("git", "show-ref", "--verify", "--quiet", "refs/remotes/origin/main")
             if fallback.ok:
-                lines.append(f"Branch remota {branch} nao encontrada; usando main.")
+                lines.append(''.join((format(t('Branch remota '), ''), format(branch, ''), format(t(' nao encontrada; usando main.'), ''))))
                 branch = "main"
         pull = await self._run("git", "pull", "--ff-only", "origin", branch, env=git_env)
         if not pull.ok:
-            return finish(False, pull.error or pull.stderr or f"Nao foi possivel atualizar a branch {branch}.")
+            return finish(False, pull.error or pull.stderr or ''.join((format(t('Nao foi possivel atualizar a branch '), ''), format(branch, ''), '.')))
         lines.extend(filter(None, (pull.stdout, pull.stderr)))
         install = await self._run(sys.executable, "-m", "pip", "install", "-e", ".")
         if not install.ok:
-            return finish(False, install.error or install.stderr or "Falha ao instalar dependencias Python.")
+            return finish(False, install.error or install.stderr or t('Falha ao instalar dependencias Python.'))
         lines.extend(filter(None, (install.stdout, install.stderr)))
         compile_result = await self._run(sys.executable, "-m", "compileall", "-q", "manguadu", "scripts/update_bot.py")
         if not compile_result.ok:
-            return finish(False, compile_result.error or compile_result.stderr or "Validacao de sintaxe Python falhou.")
-        lines.append("Modulos Python compilados com sucesso.")
+            return finish(False, compile_result.error or compile_result.stderr or t('Validacao de sintaxe Python falhou.'))
+        lines.append(t('Modulos Python compilados com sucesso.'))
         if not skip_restart:
             pm2 = clean_text(self.environment.get("PM2_BIN")) or "pm2"
             restarted = await self._run(pm2, "restart", self.app_name, "--update-env")
             if not restarted.ok:
-                return finish(False, restarted.error or restarted.stderr or "Falha ao reiniciar o processo PM2.")
+                return finish(False, restarted.error or restarted.stderr or t('Falha ao reiniciar o processo PM2.'))
             lines.extend(filter(None, (restarted.stdout, restarted.stderr)))
         else:
-            lines.append("Reinicio omitido; o comando Discord cuidara do restart.")
+            lines.append(t('Reinicio omitido; o comando Discord cuidara do restart.'))
         return finish(True)
 
     def _append_log(self, message: str) -> None:

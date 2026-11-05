@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2"]
 
 [project.urls]
 Repository = "https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers"
@@ -26,6 +26,9 @@ Documentation = "https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers#r
 
 [tool.setuptools.packages.find]
 include = ["manguadu*"]
+
+[tool.setuptools.package-data]
+manguadu = ["locales/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests_py"]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 from .tenant_scope import getenv, allowed_path
 
 import re
@@ -27,16 +29,16 @@ from .utils import clean_text, get_field, read_csv_raw_rows, read_csv_rows, read
 
 
 PERK_LABELS = {
-    "cooking": "Culinária", "fitness": "Preparo físico", "strength": "Força",
-    "blunt": "Contundente longa", "axe": "Machado", "lightfoot": "Pés leves",
-    "nimble": "Agilidade", "sprinting": "Corrida", "sneak": "Furtividade",
-    "woodwork": "Carpintaria", "aiming": "Mira", "reloading": "Recarga",
-    "farming": "Agricultura", "fishing": "Pesca", "trapping": "Armadilhas",
-    "plantscavenging": "Busca de alimentos", "doctor": "Primeiros socorros",
-    "electricity": "Elétrica", "blacksmith": "Ferraria", "metalwelding": "Metalurgia",
-    "mechanics": "Mecânica", "spear": "Lança", "maintenance": "Manutenção",
-    "smallblade": "Lâmina curta", "longblade": "Lâmina longa",
-    "smallblunt": "Contundente curta", "tailoring": "Costura",
+    "cooking": 'Culinária', "fitness": 'Preparo físico', "strength": 'Força',
+    "blunt": 'Contundente longa', "axe": 'Machado', "lightfoot": 'Pés leves',
+    "nimble": 'Agilidade', "sprinting": 'Corrida', "sneak": 'Furtividade',
+    "woodwork": 'Carpintaria', "aiming": 'Mira', "reloading": 'Recarga',
+    "farming": 'Agricultura', "fishing": 'Pesca', "trapping": 'Armadilhas',
+    "plantscavenging": 'Busca de alimentos', "doctor": 'Primeiros socorros',
+    "electricity": 'Elétrica', "blacksmith": 'Ferraria', "metalwelding": 'Metalurgia',
+    "mechanics": 'Mecânica', "spear": 'Lança', "maintenance": 'Manutenção',
+    "smallblade": 'Lâmina curta', "longblade": 'Lâmina longa',
+    "smallblunt": 'Contundente curta', "tailoring": 'Costura',
 }
 
 logger = logging.getLogger(__name__)
@@ -53,6 +55,8 @@ PERK_EMOJIS = {
 class PzData:
     def __init__(self, csv_base_path: str | Path | None, *, death_state_path: Path | None = None):
         self.base_path = Path(csv_base_path) if csv_base_path else None
+        self._stats_provider = None
+        self._stats_discovery = (0, ("none", None, []))
         self._row_cache = OrderedDict()
         self._cache_bytes = 0
         self._cache_lock = RLock()
@@ -105,6 +109,9 @@ class PzData:
             return dict(row) if row else None
 
     def death_snapshot(self, *, consume_events=True):
+        if self.stats_source()[0] == "ttf":
+            counts = {item["nick"]: int(item["row"]["deaths"]) for item in self.ttf_snapshot()["accounts"]}
+            return {"counts": counts, "total": sum(counts.values()), "events": []}
         path = resolve_server_file(self.server_path, "deaths")
         if not path or not allowed_path(path):
             return {"counts": {}, "total": 0, "events": []}
@@ -154,20 +161,73 @@ class PzData:
     def death_counts(self):
         return self.death_snapshot(consume_events=False)["counts"]
 
+    def stats_source(self, *, force=False):
+        from .stats.discovery import discover
+        with self._cache_lock:
+            checked, result = self._stats_discovery
+            if force or time.monotonic() - checked > 5:
+                result = discover(self.base_path, getenv("STATS_PROVIDER", "auto"))
+                self._stats_discovery = (time.monotonic(), result)
+            if result[1] is not None and not allowed_path(result[1]):
+                return "none", None, []
+            return result
+
+    def ttf_snapshot(self, *, force=False):
+        from .stats.ttf import TtfStats
+        source, root, _ = self.stats_source(force=force)
+        if source != "ttf":
+            return {"accounts": [], "characters": [], "invalid": 0, "deleted": 0, "stale": 0, "error": "", "updated": 0}
+        with self._cache_lock:
+            if self._stats_provider is None or self._stats_provider.root != root:
+                self._stats_provider = TtfStats(root)
+            return self._stats_provider.snapshot(force=force)
+
+    def diagnostics(self):
+        source, root, available = self.stats_source(force=True)
+        result = {"provider": source, "available": available, "root": str(root or ""), "accounts": 0, "characters": None,
+                  "invalid": 0, "deleted": 0, "stale": 0, "error": "", "updated": time.time()}
+        if source == "ttf":
+            snapshot = self.ttf_snapshot(force=True)
+            result.update({key: snapshot[key] for key in ("invalid", "deleted", "stale", "error", "updated")})
+            result.update(accounts=len(snapshot["accounts"]), characters=len(snapshot["characters"]))
+        rows = self.player_rows()
+        if source == "friendhost":
+            result["accounts"] = len(rows)
+        result["metrics"] = [key for key in ("zombiekills", "hourssurvived", "distance", "vehiclekills", "brokenweapons") if any(key in entry["row"] for entry in rows)]
+        return result
+
     @property
     def players_path(self) -> Path | None:
-        return self.base_path / "Jogadores" if self.base_path else None
+        source, root, _ = self.stats_source()
+        base = root if source == "friendhost" else self.base_path
+        return base / "Jogadores" if base else None
 
     @property
     def server_path(self) -> Path | None:
-        return self.base_path / "Servidor" if self.base_path else None
+        source, root, _ = self.stats_source()
+        if source == "ttf":
+            return None
+        base = root or self.base_path
+        return base / "Servidor" if base else None
 
     def player_names(self) -> list[str]:
+        source = self.stats_source()[0]
+        if source == "none":
+            return []
+        if source == "ttf":
+            return [item["nick"] for item in self.ttf_snapshot()["accounts"]]
         if not self.players_path or not allowed_path(self.players_path) or not self.players_path.is_dir():
             return []
         return sorted((path.name for path in self.players_path.iterdir() if path.is_dir() and not path.is_symlink()), key=str.casefold)
 
     def player_rows(self) -> list[dict]:
+        source = self.stats_source()[0]
+        if source == "none":
+            from .stats.ttf import UnavailableRows
+            return UnavailableRows()
+        if source == "ttf":
+            from .stats.ttf import ProviderRows
+            return ProviderRows(self.ttf_snapshot())
         rows = []
         for nick in self.player_names():
             row = self.latest_row(resolve_player_file(self.players_path, nick))
@@ -204,7 +264,7 @@ class PzData:
 
         return {
             **entry,
-            "profession": get_field(row, ["profession", "professionname"], "Não informada"),
+            "profession": get_field(row, ["profession", "professionname"], t('Não informada')),
             "traits": parse(["traits", "traitlist", "playertraits", "charactertraits"]),
             "positive": parse(["positivetraits", "goodtraits"]),
             "negative": parse(["negativetraits", "badtraits"]),
@@ -218,19 +278,23 @@ class PzData:
         perks = self.latest_row(perks_file) or {}
         ignored = {"systemdate", "systemtime", "gametime", "steamid", "username", "charname"}
         skills = [
-            {"key": key, "label": PERK_LABELS.get(key, key), "emoji": PERK_EMOJIS.get(key, "✨"), "value": to_number(value)}
+            {"key": key, "label": t(PERK_LABELS.get(key, key)), "emoji": PERK_EMOJIS.get(key, "✨"), "value": to_number(value)}
             for key, value in perks.items() if key not in ignored
         ]
         skills.sort(key=lambda skill: (-skill["value"], skill["label"].casefold()))
         return {**entry, "skills": skills}
 
-    def player_rank(self, nick_input: str, metric: str = "zombiekills") -> dict | None:
-        column = "hourssurvived" if metric == "hours" else "zombiekills"
+    def player_rank(self, nick_input: str, metric: str = "zombiekills", scope: str = "account") -> dict | None:
+        column = {"hours": "hourssurvived", "kills": "zombiekills"}.get(metric, metric)
         rows = self.player_rows()
+        if scope == "character":
+            rows = [{"nick": item["row"]["charname"] + " · " + item["id"], "row": item["row"], "provider": "ttf"}
+                    for item in self.ttf_snapshot()["characters"]]
+        rows = [entry for entry in rows if get_field(entry["row"], [column]) != ""]
         rows.sort(key=lambda entry: (-to_number(get_field(entry["row"], [column])), entry["nick"].casefold()))
         target = clean_text(nick_input).casefold()
         for index, entry in enumerate(rows):
-            if target in {entry["nick"].casefold(), get_field(entry["row"], ["username"]).casefold(), get_field(entry["row"], ["charname"]).casefold()}:
+            if target in {entry["nick"].casefold(), get_field(entry["row"], ["username"]).casefold(), get_field(entry["row"], ["charname"]).casefold(), get_field(entry["row"], ["characterid"]).casefold()}:
                 return {"metric": column, "position": index + 1, "total": len(rows), "entry": entry, "leaderboard": rows[:10]}
         return None
 
@@ -239,6 +303,8 @@ class PzData:
         return [name for piece in content.split(";") if (name := clean_text(piece))]
 
     def world_snapshot(self) -> dict[str, str]:
+        if self.stats_source()[0] == "ttf":
+            return {"source": "indisponivel", "gameTime": "", "gameDate": "", "timeOfDay": "", "temperature": ""}
         path = resolve_server_file(self.server_path, "world")
         lines = [line.strip() for line in read_text_file(path).splitlines() if line.strip()]
         fallback_time = ""
@@ -430,7 +496,7 @@ class PzData:
             y2 = to_number(raw.get("maxY", raw.get("y2")))
             if x1 == x2 or y1 == y2:
                 continue
-            name = clean_text(raw.get("name") or raw.get("id") or f"Mapa {index}")
+            name = clean_text(raw.get("name") or raw.get("id") or ''.join((format(t('Mapa '), ''), format(index, ''))))
             maps.append({
                 "id": clean_text(raw.get("id") or name.casefold().replace(" ", "-")),
                 "name": name,

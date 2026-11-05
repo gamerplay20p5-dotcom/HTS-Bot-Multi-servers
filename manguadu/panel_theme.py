@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import asyncio
 import json
 import os
@@ -23,8 +25,8 @@ THEME_FILE = DATA_DIR / "panel-theme.json"
 DRAFT_FILE = DATA_DIR / "panel-theme-draft.json"
 MAX_MEDIA_BYTES = 25 * 1024 * 1024
 DEFAULT_THEME = {
-    "title": "Servidor Project Zomboid",
-    "description": "Sobreviva. Evolua. Deixe sua marca no apocalipse.",
+    "title": 'Servidor Project Zomboid',
+    "description": 'Sobreviva. Evolua. Deixe sua marca no apocalipse.',
     "primaryColor": "#28D17C",
     "secondaryColor": "#F0A93B",
     "banner": None,
@@ -76,7 +78,8 @@ def _write(path: Path, value: dict) -> None:
 
 
 def get_saved_theme() -> dict:
-    return _read(tenant_path("panel-theme.json", THEME_FILE), DEFAULT_THEME)
+    fallback = {**DEFAULT_THEME, "title": t("Servidor Project Zomboid"), "description": t("Sobreviva. Evolua. Deixe sua marca no apocalipse.")}
+    return _read(tenant_path("panel-theme.json", THEME_FILE), fallback)
 
 
 def get_draft_theme() -> dict:
@@ -154,16 +157,16 @@ async def _download(url: str, destination: Path) -> tuple[str, int]:
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url, allow_redirects=True) as response:
             if response.status < 200 or response.status >= 300:
-                raise ValueError(f"Falha ao baixar mídia: HTTP {response.status}.")
+                raise ValueError(''.join((format(t('Falha ao baixar mídia: HTTP '), ''), format(response.status, ''), '.')))
             length = int(response.headers.get("Content-Length") or 0)
             if length > MAX_MEDIA_BYTES:
-                raise ValueError("A mídia excede o limite de 25 MB.")
+                raise ValueError(t('A mídia excede o limite de 25 MB.'))
             total = 0
             with destination.open("wb") as stream:
                 async for chunk in response.content.iter_chunked(64 * 1024):
                     total += len(chunk)
                     if total > MAX_MEDIA_BYTES:
-                        raise ValueError("A mídia excede o limite de 25 MB.")
+                        raise ValueError(t('A mídia excede o limite de 25 MB.'))
                     stream.write(chunk)
             return response.headers.get("Content-Type", "").split(";", 1)[0].lower(), total
 
@@ -175,10 +178,10 @@ async def _video_thumbnail(source: Path, output: Path) -> None:
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
         )
     except OSError as exc:
-        raise ValueError("ffmpeg não encontrado. Instale-o na VM para converter vídeos.") from exc
+        raise ValueError(t('ffmpeg não encontrado. Instale-o na VM para converter vídeos.')) from exc
     _, stderr = await process.communicate()
     if process.returncode:
-        raise ValueError(f"Falha ao converter vídeo com ffmpeg: {stderr.decode(errors='replace')[-300:]}")
+        raise ValueError(''.join((format(t('Falha ao converter vídeo com ffmpeg: '), ''), format(stderr.decode(errors='replace')[-300:], ''))))
 
 
 async def store_panel_media(kind: str, *, url: str = "", attachment: discord.Attachment | None = None) -> dict[str, str]:
@@ -189,7 +192,7 @@ async def store_panel_media(kind: str, *, url: str = "", attachment: discord.Att
     if external and attachment is None:
         parsed = urlparse(external)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("Informe uma URL HTTP/HTTPS válida.")
+            raise ValueError(t('Informe uma URL HTTP/HTTPS válida.'))
         if re.search(r"\.(?:mp4|webm|mov|mkv)(?:$|\?)", external, re.I):
             tenant_path("panel-media", MEDIA_DIR).mkdir(parents=True, exist_ok=True)
             suffix = Path(parsed.path).suffix.lower() or ".mp4"
@@ -203,7 +206,7 @@ async def store_panel_media(kind: str, *, url: str = "", attachment: discord.Att
             return {"url": "", "filePath": str(output), "filename": output.name}
         return {"url": external, "filePath": "", "filename": ""}
     if attachment is None or not attachment.url:
-        raise ValueError("Envie um arquivo ou informe uma URL.")
+        raise ValueError(t('Envie um arquivo ou informe uma URL.'))
     tenant_path("panel-media", MEDIA_DIR).mkdir(parents=True, exist_ok=True)
     filename = f"{kind}-{int(time.time() * 1000)}-{_safe_filename(attachment.filename, kind)}"
     destination = tenant_path("panel-media", MEDIA_DIR) / filename
@@ -218,5 +221,5 @@ async def store_panel_media(kind: str, *, url: str = "", attachment: discord.Att
         return {"url": "", "filePath": str(output), "filename": output.name}
     if content_type and not content_type.startswith("image/"):
         destination.unlink(missing_ok=True)
-        raise ValueError("O arquivo precisa ser imagem, GIF ou vídeo.")
+        raise ValueError(t('O arquivo precisa ser imagem, GIF ou vídeo.'))
     return {"url": "", "filePath": str(destination), "filename": filename}

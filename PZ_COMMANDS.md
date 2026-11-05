@@ -4,6 +4,8 @@ Este é o guia operacional do bot Python para administradores da comunidade. Cri
 
 Leia [README.md](README.md) para visão geral do projeto e [DEPLOY.md](DEPLOY.md) para instalar o runtime Python.
 
+O novo `/config` permite procurar servidores pelo nome, receber autorização do proprietário do aplicativo, detectar ID/UUID/pasta Lua e concluir o vínculo por arquivo. Inclui diagnóstico e seleção FriendHost/TTF Stats MP. Veja o [guia completo PT/EN](docs/SERVER_SETUP.pt-en.md). No `/rank`, `escopo:account` usa totais históricos da conta e `escopo:character` aceita o ID de um personagem TTF. As métricas incluem abates, horas, distância, veículos e armas quebradas quando exportadas.
+
 O runtime completo do bot e Python. Ele oferece `/config_bot`, `/bot`, `/servidor`, `/rcon`,
 `/status`, `/statuscomplete`, `/automacao`, tickets, WL com `adduser` e os comandos publicos
 `/online`, `/info`, `/skills`, `/traits`, `/rank`, `/localizar_veiculo`,
@@ -14,6 +16,8 @@ alertas PZAntiCheat, espelho de logs e tarefas recorrentes também rodam no runt
 O bot registra os comandos pelo sistema oficial de slash commands do Discord. Com `GUILD_ID` preenchido, eles aparecem imediatamente naquela guild; sem `GUILD_ID`, o registro e global e pode demorar para propagar.
 
 ## Configuração por Discord no dedicado
+
+Use `/language` ou **Idioma / Language** no painel para selecionar português ou inglês por comunidade. As respostas novas seguem essa preferência persistida; o menu de slash commands segue o idioma do aplicativo Discord do usuário. Com Discord em inglês, por exemplo, `/servidor` aparece como `/server`, `/painel` como `/panel` e `/automacao` como `/automation`. Dados dos jogadores, lore original e logs não são traduzidos automaticamente.
 
 Criado por **Malaio/Erick**. [English operations and commands](docs/OPERATIONS.en.md).
 

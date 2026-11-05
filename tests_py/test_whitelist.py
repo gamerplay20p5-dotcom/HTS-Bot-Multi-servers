@@ -263,7 +263,7 @@ def test_discord_views_fit_rows_and_public_buttons_persist() -> None:
     bot = ManguaduBot(store)
     commands = bot.tree.get_commands()
     assert {command.name for command in commands} == {
-        "config", "condig", "config_bot", "config_api", "config_lore", "config_kick_automatico", "wl", "bot", "online", "info", "skills", "traits", "rank",
+        "config", "condig", "language", "config_bot", "config_api", "config_lore", "config_kick_automatico", "wl", "bot", "online", "info", "skills", "traits", "rank",
         "localizar_veiculo", "mapas", "gps", "satelite", "wipe_zeds", "wipe", "wipe_force",
         "wipe_teste", "wipe_chunk", "wipe_chunk_force", "wipe_chunk_teste",
         "rcon", "servidor", "status", "statuscomplete", "logs", "safehouse",

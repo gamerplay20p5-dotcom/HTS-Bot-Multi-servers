@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import json
 import os
 import sqlite3
@@ -21,6 +23,7 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "bot-config.
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
+    "language": "pt-BR",
     "channels": {
         "admin": None, "chat": None, "evolution": None, "stats": None,
         "ranking": None, "anticheat": None, "ticket_panel": None,
@@ -54,6 +57,8 @@ def _merged_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
     config["channels"].update(raw.get("channels") if isinstance(raw.get("channels"), dict) else {})
     config["wl"].update(raw.get("wl") if isinstance(raw.get("wl"), dict) else {})
     config["kick_automatico"].update(raw.get("kick_automatico") if isinstance(raw.get("kick_automatico"), dict) else {})
+    if raw.get("language") in {"pt-BR", "en"}:
+        config["language"] = raw["language"]
     for key in ("ticket_category_id", "admin_role_id", "ticket_panel_message_id", "stats_panel_message_id", "ranking_panel_message_id"):
         if key in raw:
             config[key] = raw[key]
@@ -61,6 +66,20 @@ def _merged_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
 
 
 class ConfigStore:
+    def get_language(self, guild_id: int) -> str:
+        with self._lock:
+            row = self._db.execute("SELECT payload FROM guild_settings WHERE guild_id = ?", (guild_id,)).fetchone()
+            language = json.loads(row[0]).get("language", "pt-BR") if row else "pt-BR"
+            return language if language in {"pt-BR", "en"} else "pt-BR"
+
+    def set_language(self, guild_id: int, language: str) -> None:
+        if language not in {"pt-BR", "en"}:
+            raise ValueError("Unsupported language")
+        with self._lock:
+            config = self.get_settings(guild_id)
+            config["language"] = language
+            self.save_settings(guild_id, config)
+
     def __init__(self, path: str | Path = DEFAULT_DB_PATH):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +92,22 @@ class ConfigStore:
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.execute("PRAGMA busy_timeout = 5000")
         self._db.executescript("""
+            CREATE TABLE IF NOT EXISTS server_authorizations (
+                guild_id INTEGER NOT NULL,
+                server_uuid TEXT NOT NULL UNIQUE,
+                identifier TEXT NOT NULL,
+                actor_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(guild_id, server_uuid)
+            );
+            CREATE TABLE IF NOT EXISTS binding_audit (
+                id INTEGER PRIMARY KEY,
+                guild_id INTEGER NOT NULL,
+                server_uuid TEXT NOT NULL,
+                actor_id INTEGER NOT NULL,
+                event TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS server_bindings (
                 guild_id INTEGER PRIMARY KEY,
                 server_uuid TEXT NOT NULL UNIQUE,
@@ -141,12 +176,44 @@ class ConfigStore:
             row = self._db.execute("SELECT payload FROM server_bindings WHERE guild_id = ?", (guild_id,)).fetchone()
             return json.loads(row[0]) if row else None
 
+    def binding_owner(self, server_uuid: str) -> int | None:
+        with self._lock:
+            row = self._db.execute("SELECT guild_id FROM server_bindings WHERE server_uuid=?", (server_uuid,)).fetchone()
+            return int(row[0]) if row else None
+
+    def authorize_server(self, guild_id: int, server: dict, actor_id: int):
+        """Caller must verify the application owner; no guild-admin self-grants."""
+        with self._lock, self._db:
+            owner = self.binding_owner(server["uuid"])
+            if owner is not None and owner != guild_id:
+                raise ValueError("Server already bound to another guild")
+            self._db.execute("INSERT INTO server_authorizations(guild_id,server_uuid,identifier,actor_id) VALUES (?,?,?,?) "
+                             "ON CONFLICT(guild_id,server_uuid) DO UPDATE SET identifier=excluded.identifier, actor_id=excluded.actor_id",
+                             (guild_id, server["uuid"], server["identifier"], actor_id))
+            self.audit_binding(guild_id, server["uuid"], actor_id, "authorized")
+
+    def server_authorizations(self, guild_id: int):
+        with self._lock:
+            return [dict(row) for row in self._db.execute("SELECT * FROM server_authorizations WHERE guild_id=?", (guild_id,))]
+
+    def revoke_server_authorization(self, guild_id: int, server_uuid: str, actor_id: int):
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM server_authorizations WHERE guild_id=? AND server_uuid=?", (guild_id, server_uuid))
+            self.audit_binding(guild_id, server_uuid, actor_id, "authorization_revoked")
+
+    def audit_binding(self, guild_id: int, server_uuid: str, actor_id: int, event: str):
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO binding_audit(guild_id,server_uuid,actor_id,event) VALUES (?,?,?,?)", (guild_id, server_uuid, actor_id, event))
+
     def list_bindings(self) -> list[tuple[int, dict[str, Any]]]:
         with self._lock:
             return [(int(row[0]), json.loads(row[1])) for row in self._db.execute("SELECT guild_id, payload FROM server_bindings ORDER BY guild_id")]
 
     def save_binding(self, guild_id: int, binding: dict[str, Any]) -> None:
         with self._lock, self._db:
+            grant = self._db.execute("SELECT guild_id FROM server_authorizations WHERE server_uuid=?", (binding["uuid"],)).fetchone()
+            if grant is not None and int(grant[0]) != guild_id:
+                raise sqlite3.IntegrityError("Server authorization belongs to another guild")
             self._db.execute(
                 "INSERT INTO server_bindings(guild_id, server_uuid, payload) VALUES (?, ?, ?) "
                 "ON CONFLICT(guild_id) DO UPDATE SET server_uuid=excluded.server_uuid, payload=excluded.payload",
@@ -179,7 +246,7 @@ class ConfigStore:
         try:
             cipher = Fernet(key)
         except ValueError as exc:
-            raise RuntimeError(f"Chave local invalida em {key_path}; restaure o backup junto com o banco SQLite.") from exc
+            raise RuntimeError(''.join((format(t('Chave local invalida em '), ''), format(key_path, ''), format(t('; restaure o backup junto com o banco SQLite.'), '')))) from exc
         try:
             os.chmod(key_path, 0o600)
         except OSError:
@@ -243,7 +310,7 @@ class ConfigStore:
 
     def _save_guild_lore(self, guild_id: int, reference: str) -> None:
         if len(reference) > MAX_LORE_CHARS:
-            raise ValueError(f"A lore base pode ter no maximo {MAX_LORE_CHARS:,} caracteres.")
+            raise ValueError(''.join((format(t('A lore base pode ter no maximo '), ''), format(MAX_LORE_CHARS, ''.join((',',))), format(t(' caracteres.'), ''))))
         current = self._get_guild_lore(guild_id)
         if current == reference:
             return
@@ -268,7 +335,7 @@ class ConfigStore:
 
     def set_value(self, guild_id: int, section: str, key: str, value: Any) -> dict[str, Any]:
         if section not in ("channels", "wl", "kick_automatico") or key not in DEFAULT_SETTINGS[section]:
-            raise ValueError("Campo de configuracao desconhecido")
+            raise ValueError(t('Campo de configuracao desconhecido'))
         with self._lock:
             config = self.get_settings(guild_id)
             config[section][key] = value
@@ -286,12 +353,12 @@ class ConfigStore:
         try:
             return self._fernet.decrypt(row["api_key_ciphertext"].encode("ascii")).decode("utf-8")
         except (InvalidToken, UnicodeDecodeError) as exc:
-            raise ValueError("A chave Gemini armazenada nao pode ser descriptografada; restaure o arquivo .key do bot-config.") from exc
+            raise ValueError(t('A chave Gemini armazenada nao pode ser descriptografada; restaure o arquivo .key do bot-config.')) from exc
 
     def set_gemini_api_key(self, guild_id: int, api_key: str) -> None:
         cleaned = api_key.strip()
         if not cleaned or len(cleaned) > 256:
-            raise ValueError("A chave Gemini esta vazia ou excede o tamanho permitido.")
+            raise ValueError(t('A chave Gemini esta vazia ou excede o tamanho permitido.'))
         ciphertext = self._fernet.encrypt(cleaned.encode("utf-8")).decode("ascii")
         with self._lock, self._db:
             self._db.execute(
@@ -305,7 +372,7 @@ class ConfigStore:
 
     def set_top_value(self, guild_id: int, key: str, value: Any) -> dict[str, Any]:
         if key not in ("ticket_category_id", "admin_role_id", "ticket_panel_message_id", "stats_panel_message_id", "ranking_panel_message_id"):
-            raise ValueError("Campo de configuracao desconhecido")
+            raise ValueError(t('Campo de configuracao desconhecido'))
         with self._lock:
             config = self.get_settings(guild_id)
             config[key] = value
@@ -371,7 +438,7 @@ class ConfigStore:
 
     def save_request(self, channel_id: int, guild_id: int, user_id: int, username: str, character_name: str, lore: str, score: float, status: str, password_ciphertext: str = "", triage: dict[str, Any] | None = None) -> None:
         if len(lore) > MAX_LORE_CHARS:
-            raise ValueError(f"A lore de personagem pode ter no maximo {MAX_LORE_CHARS:,} caracteres.")
+            raise ValueError(''.join((format(t('A lore de personagem pode ter no maximo '), ''), format(MAX_LORE_CHARS, ''.join((',',))), format(t(' caracteres.'), ''))))
         encoded = lore.encode("utf-8")
         compressed = zlib.compress(encoded, level=6) if len(encoded) > 4096 else None
         stored_lore = "" if compressed is not None else lore
