@@ -41,7 +41,7 @@ def test_panel_payloads_render_status_and_rankings() -> None:
         {"nick": "Menta", "row": {"username": "Menta", "zombiekills": "120", "hourssurvived": "12.5", "factionname": "Lobos"}},
         {"nick": "Nina", "row": {"username": "Nina", "zombiekills": "80", "hourssurvived": "8", "factionname": "Lobos"}},
     ]
-    ranking, files = build_ranking_panel(players, [{"name": "Lobos", "tagname": "LB", "owner": "Menta", "players": "Menta,Nina"}], [["Menta"]])
+    ranking, files = build_ranking_panel(players, [{"name": "Lobos", "tagname": "LB", "owner": "Menta", "players": "Menta,Nina"}], [["Menta"]], enabled=["kills", "hours", "factions", "deaths"])
     assert not files
     assert ranking[0].title == "🏆 Servidor Project Zomboid · Hall da Sobrevivência"
     assert any(embed.title == "🛡️ DOMÍNIO DAS FACÇÕES" for embed in ranking)

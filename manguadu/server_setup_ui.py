@@ -251,6 +251,13 @@ async def diagnose(bot, guild_id):
             lines.append(t("Última leitura: ") + f"<t:{int(info['updated'])}:R>")
         if info["error"]:
             lines.append(t("Falha de leitura: ") + info["error"])
+        from .stats.diagnostics import explanation
+        records = ([info["error_detail"]] if info.get("error_detail") else []) + (info.get("invalid_records") or [])[:5]
+        for record in records:
+            name = discord.utils.escape_markdown(record["file"])[:240]
+            lines.append(name + " · " + explanation(record))
+        if info.get("invalid_records"):
+            lines.append(t('Use “Registros TTF inválidos” para baixar os detalhes por arquivo.'))
     except (ValueError, OSError) as exc:
         lines.append(t("Leitura local indisponível: verifique o node Wings, a pasta Lua e as permissões do bot."))
     return discord.Embed(title=t("Diagnóstico da integração"), description="\n".join(lines)[:4000], color=0x28D17C)

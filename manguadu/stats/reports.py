@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import discord
 
 from ..i18n import t
-from .ttf import METRICS
+from ..ranking import format_stat, normalize_rankings, RANKINGS
 
 LABELS = {"zombiekills": "Zumbis mortos", "hourssurvived": "Horas sobrevividas", "distance": "Distância (m)",
           "vehiclekills": "Abates com veículos", "brokenweapons": "Armas quebradas"}
@@ -13,8 +13,7 @@ def display(row, metric):
     value = row.get(metric)
     if value is None:
         return t("Indisponível")
-    number = float(value)
-    return f"{number:.4g}" if number > 10**15 else f"{number:,.2f}"
+    return format_stat(value)
 
 
 def profile(snapshot):
@@ -51,21 +50,26 @@ def report(snapshot):
     return "\n".join(lines) + "\n"
 
 
-def ranking_panel(entries, theme):
+def ranking_panel(entries, theme, *, enabled=None):
+    selected = normalize_rankings(enabled)
     rows = [entry["row"] for entry in entries]
     header = discord.Embed(title=(theme["title"] + " · TTF Stats MP")[:256],
                            description=t("Totais históricos por conta; inclui personagens vivos e mortos. Personagens excluídos pelo mod não entram nos totais."), color=0x28D17C)
     header.add_field(name=t("Contas / Personagens"), value=f"{len(rows)} / {sum(int(row['characters']) for row in rows)}")
-    header.add_field(name=t("Mortes registradas"), value=str(sum(int(row["deaths"]) for row in rows)))
+    if "deaths" in selected:
+        header.add_field(name=t("Mortes registradas"), value=str(sum(int(row["deaths"]) for row in rows)))
     diagnostics = getattr(entries, "diagnostics", {})
     if diagnostics.get("invalid") or diagnostics.get("stale") or diagnostics.get("error"):
         header.add_field(name=t("Qualidade dos dados"), value=t("Registros inválidos / cache anterior: ") + f"{diagnostics.get('invalid', 0)} / {diagnostics.get('stale', 0)}" + (" · " + diagnostics["error"] if diagnostics.get("error") else ""), inline=False)
     embeds = [header]
-    for metric in METRICS:
+    for key in selected:
+        metric = {"kills": "zombiekills", "hours": "hourssurvived", "deaths": "deaths"}.get(key, key)
         available = [entry for entry in entries if metric in entry["row"]]
         available.sort(key=lambda item: (-float(item["row"][metric]), item["nick"].casefold()))
-        description = "\n".join(f"**{i}.** {discord.utils.escape_markdown(item['nick'])[:150]} · `{display(item['row'], metric)}`" for i, item in enumerate(available[:10], 1))
-        embeds.append(discord.Embed(title=t(LABELS[metric]), description=description or t("Indisponível"), color=0x28D17C))
+        description = "\n".join(f"**{i}.** {discord.utils.escape_markdown(item['nick'])[:80]} · `{display(item['row'], metric)}`" for i, item in enumerate(available[:5], 1))[:500]
+        embeds.append(discord.Embed(title=t(RANKINGS[key]), description=description or t("Indisponível"), color=0x28D17C))
+    if not selected:
+        header.description = t('Nenhum ranking selecionado. Apenas o resumo será publicado.')
     embeds[-1].set_footer(text=t("Ranking atualizado silenciosamente a cada 10 minutos"))
     embeds[-1].timestamp = datetime.now(timezone.utc)
     return embeds

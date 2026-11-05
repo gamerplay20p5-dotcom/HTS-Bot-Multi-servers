@@ -7,7 +7,7 @@ def safe_child(root: Path, path: Path, *, enforce_scope=True) -> bool:
     try:
         if (enforce_scope and not allowed_path(path)) or not path.resolve().is_relative_to(root.resolve()):
             return False
-        return not any(part.is_symlink() for part in (path, *path.parents) if part != root.parent)
+        return not any(part.is_symlink() for part in (path, *path.parents))
     except (OSError, ValueError):
         return False
 

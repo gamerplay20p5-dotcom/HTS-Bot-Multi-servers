@@ -8,12 +8,13 @@ from __future__ import annotations
 import math
 import os
 import time
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 from pathlib import Path
 from threading import RLock
 
 from .discovery import safe_child
 from .files import confined_reader
+from .diagnostics import InvalidRecord, error_code
 
 MAX_FILE = 256 * 1024
 MAX_INDEX = 4 * 1024 * 1024
@@ -56,26 +57,30 @@ def pairs(value: str) -> dict[str, float]:
 
 def parse_character(text: str, character_id: str, username: str) -> dict:
     values = {}
-    for line in text.splitlines():
+    for line_number, line in enumerate(text.splitlines(), 1):
         key, sep, value = line.partition("=")
         if not sep or not key or key in values:
-            raise ValueError("invalid key/value record")
+            raise InvalidRecord("invalid_key_value", line=line_number)
         if key in {"version", "deleted", "characterID", "username", "forename", "surname", "isDead", "lastSeenRealTimestamp", *METRICS.values(), "weapons", "categories"}:
             values[key] = value
-    if values.get("version") != "1" or values.get("characterID") != character_id or values.get("username") != username:
-        raise ValueError("index/character mismatch or unsupported version")
+    if values.get("version") != "1":
+        raise InvalidRecord("unsupported_version", field="version")
+    if values.get("characterID") != character_id:
+        raise InvalidRecord("character_mismatch", field="characterID")
+    if values.get("username") != username:
+        raise InvalidRecord("username_mismatch", field="username")
     if values.get("deleted") not in {"true", "false"}:
-        raise ValueError("missing deleted flag")
+        raise InvalidRecord("invalid_boolean", field="deleted")
     if values["deleted"] == "true":
         return {"deleted": True}
     if values.get("isDead") not in {"true", "false"}:
-        raise ValueError("missing isDead flag")
+        raise InvalidRecord("invalid_boolean", field="isDead")
     row = {"username": username, "charname": (" ".join(filter(None, (values.get("forename"), values.get("surname")))) or username)[:200],
            "characterid": character_id, "isalive": str(values["isDead"] == "false").lower()}
     for key, source in METRICS.items():
         parsed = number(values.get(source))
         if source in values and parsed is None:
-            raise ValueError("invalid numeric metric")
+            raise InvalidRecord("invalid_number", field=source)
         if parsed is not None:
             row[key] = str(parsed / 3600 if key == "hourssurvived" else parsed)
     return {"id": character_id, "username": username, "row": row, "deleted": False,
@@ -110,26 +115,28 @@ class TtfStats:
         self._lock = RLock()
         self._checked = 0.0
         self._index_version, self._index_text = None, ""
-        self._snapshot = {"accounts": [], "characters": [], "invalid": 0, "deleted": 0, "stale": 0, "error": "", "updated": 0}
+        self._snapshot = {"accounts": [], "characters": [], "invalid": 0, "deleted": 0, "stale": 0, "error": "", "updated": 0,
+                          "invalid_records": [], "invalid_reasons": {}, "error_detail": None}
 
     def _read(self, path, limit):
         with confined_reader(self.root, path) as stream:
             before = os.fstat(stream.fileno())
             if before.st_size > limit:
-                raise ValueError("file exceeds read limit")
+                raise InvalidRecord("file_size_limit")
             raw = stream.read(limit + 1)
             after = os.fstat(stream.fileno())
         if len(raw) > limit or (before.st_mtime_ns, before.st_size) != (after.st_mtime_ns, after.st_size):
-            raise ValueError("file changed during read")
+            raise InvalidRecord("changed_during_read")
         # A writer may have truncated/reopened a file. Retry on the next snapshot.
         if raw and not raw.endswith(b"\n"):
-            raise ValueError("incomplete write")
+            raise InvalidRecord("incomplete_write")
         return raw.decode("utf-8-sig"), (after.st_mtime_ns, after.st_size, after.st_ino)
 
     def snapshot(self, *, force=False):
         with self._lock:
             if not safe_child(self.root, self.root):
-                return {"accounts": [], "characters": [], "invalid": 0, "deleted": 0, "stale": 0, "error": "unsafe provider root", "updated": 0}
+                return {"accounts": [], "characters": [], "invalid": 0, "deleted": 0, "stale": 0, "error": "unsafe provider root", "updated": 0,
+                        "invalid_records": [], "invalid_reasons": {}, "error_detail": {"file": "index.txt", "code": "unsafe_path"}}
             if not force and time.monotonic() - self._checked < 5:
                 return self._snapshot
             self._checked = time.monotonic()
@@ -145,22 +152,31 @@ class TtfStats:
                     text, self._index_version = self._read(index, MAX_INDEX)
                     self._index_text = text
             except (OSError, ValueError, UnicodeError) as exc:
-                self._snapshot = {**self._snapshot, "error": type(exc).__name__, "stale": len(self._snapshot["characters"])}
+                self._snapshot = {**self._snapshot, "error": type(exc).__name__, "stale": len(self._snapshot["characters"]),
+                                  "error_detail": {"file": "index.txt", "code": error_code(exc)}}
                 return self._snapshot
             invalid, deleted, stale, snapshot_bytes = 0, 0, 0, 0
+            details, reasons = [], Counter()
+            def record_invalid(file, code, index_line, error=None):
+                reasons[code] += 1
+                if len(details) < 50:
+                    details.append({"file": file, "code": code, "index_line": index_line,
+                                    "field": getattr(error, "field", ""), "record_line": getattr(error, "line", 0)})
             seen, characters = set(), []
-            for line in text.splitlines():
+            for index_line, line in enumerate(text.splitlines(), 1):
                 if line == "characterID|username|forename|surname" or not line:
                     continue
                 parts = line.split("|")
                 if len(parts) != 4:
                     invalid += 1
+                    record_invalid("index.txt", "invalid_index", index_line)
                     continue
                 cid, username, _, _ = parts
                 if cid in seen:
                     continue
                 if not cid or not username or len(username) > 200 or len(cid) > 240 or any(c in cid for c in "/\\:\x00") or cid in {".", ".."}:
                     invalid += 1
+                    record_invalid("index.txt", "invalid_identifier", index_line)
                     continue
                 if len(seen) >= MAX_CHARACTERS:
                     self._snapshot = {**self._snapshot, "error": "character count limit", "stale": len(self._snapshot["characters"])}
@@ -188,11 +204,13 @@ class TtfStats:
                         while self._cache and self._bytes > MAX_CACHE_BYTES:
                             _, old = self._cache.popitem(last=False)
                             self._bytes -= old[2]
-                except FileNotFoundError:
+                except FileNotFoundError as exc:
                     invalid += 1
+                    record_invalid(cid + ".txt", "missing_file", index_line, exc)
                     continue
-                except (OSError, ValueError, UnicodeError):
+                except (OSError, ValueError, UnicodeError) as exc:
                     invalid += 1
+                    record_invalid(cid + ".txt", error_code(exc), index_line, exc)
                     if not entry or entry[3] != username or not safe_child(self.root, path):
                         continue
                     character = entry[1]
@@ -210,5 +228,6 @@ class TtfStats:
                 if cid not in seen:
                     self._bytes -= self._cache.pop(cid)[2]
             self._snapshot = {"accounts": aggregate(characters), "characters": characters, "invalid": invalid, "deleted": deleted,
-                              "stale": stale, "error": "", "updated": time.time()}
+                              "stale": stale, "error": "", "updated": time.time(), "invalid_records": details,
+                              "invalid_reasons": dict(reasons), "error_detail": None}
             return self._snapshot

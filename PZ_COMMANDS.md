@@ -6,6 +6,8 @@ Leia [README.md](README.md) para visão geral do projeto e [DEPLOY.md](DEPLOY.md
 
 O novo `/config` permite procurar servidores pelo nome, receber autorização do proprietário do aplicativo, detectar ID/UUID/pasta Lua e concluir o vínculo por arquivo. Inclui diagnóstico e seleção FriendHost/TTF Stats MP. Veja o [guia completo PT/EN](docs/SERVER_SETUP.pt-en.md). No `/rank`, `escopo:account` usa totais históricos da conta e `escopo:character` aceita o ID de um personagem TTF. As métricas incluem abates, horas, distância, veículos e armas quebradas quando exportadas.
 
+Em **Rankings publicados**, selecione quais tabelas entram no painel e no preview. `/rank jogador:<conta> tipo:skills10` consulta a quantidade de habilidades no nível 10 do snapshot atual FriendHost; o TTF v1 não exporta esses níveis. **Registros TTF inválidos** baixa um diagnóstico privado por arquivo. Veja [configuração, ACL e critérios PT/EN](docs/RANKINGS_AND_TTF_ACL.pt-en.md).
+
 O runtime completo do bot e Python. Ele oferece `/config_bot`, `/bot`, `/servidor`, `/rcon`,
 `/status`, `/statuscomplete`, `/automacao`, tickets, WL com `adduser` e os comandos publicos
 `/online`, `/info`, `/skills`, `/traits`, `/rank`, `/localizar_veiculo`,

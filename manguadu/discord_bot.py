@@ -37,6 +37,7 @@ from .pz_data import PzData
 from .pz_map_renderer import create_map_png
 from .panel_player_links import get_player_link, load_player_links, remove_player_link, set_player_link
 from .panel_reports import build_ranking_panel, build_server_panel, build_server_status_embed
+from .ranking import RANKINGS, format_stat
 from .panel_theme import get_draft_theme, save_draft_theme, store_panel_media, update_draft_theme
 from .player_data import collect_player_snapshot
 from .player_reports import build_status_complete_embed, build_status_complete_report, build_status_embed
@@ -211,6 +212,11 @@ class AdminView(GuildView):
 
 
 class ConfigHomeView(AdminView):
+    @discord.ui.button(label='Rankings publicados', style=discord.ButtonStyle.secondary, row=1)
+    async def rankings(self, interaction, _button):
+        view = RankingsConfigView(self.bot, self.guild_id)
+        await interaction.response.edit_message(embed=view.embed(), view=view)
+
     @discord.ui.button(label="Idioma / Language", style=discord.ButtonStyle.secondary, row=1)
     async def choose_language(self, interaction, _button):
         fresh = LanguageView(self.bot, self.guild_id)
@@ -236,6 +242,47 @@ class ConfigHomeView(AdminView):
     @discord.ui.button(label='Kick automático por voz', style=discord.ButtonStyle.danger)
     async def kick_automatico(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         view = KickAutoConfigView(self.bot, self.guild_id)
+        await interaction.response.edit_message(embed=view.embed(), view=view)
+
+
+class RankingsConfigView(AdminView):
+    def __init__(self, bot, guild_id):
+        super().__init__(bot, guild_id)
+        selected = bot.store.get_rankings(guild_id)
+        self.selector = discord.ui.Select(placeholder=t('Escolha os rankings publicados'), min_values=0, max_values=len(RANKINGS), row=0,
+            options=[discord.SelectOption(label=t(label), value=key, default=key in selected) for key, label in RANKINGS.items()])
+        self.selector.callback = self.choose
+        self.add_item(self.selector)
+
+    def embed(self):
+        selected = self.bot.store.get_rankings(self.guild_id)
+        description = t('Selecione apenas os rankings que esta comunidade deseja publicar. A escolha vale para o painel automático e o preview.')
+        description += "\n\n" + ("\n".join("• " + t(RANKINGS[key]) for key in selected) or t('Nenhum ranking selecionado. Apenas o resumo será publicado.'))
+        description += "\n\n" + t('Habilidades no nível 10: quantidade de habilidades no nível máximo por jogador, usando o snapshot atual do FriendHost. O TTF v1 não exporta esses níveis.')
+        return discord.Embed(title=t('Rankings publicados'), description=description, color=0x28D17C)
+
+    async def interaction_check(self, interaction):
+        return interaction.guild_id == self.guild_id and await super().interaction_check(interaction)
+
+    async def choose(self, interaction):
+        if interaction.guild_id != self.guild_id or not await _admin_guard(interaction, self.bot.store):
+            return
+        values = interaction.data.get("values", [])
+        if not isinstance(values, list) or any(not isinstance(key, str) or key not in RANKINGS for key in values):
+            await interaction.response.send_message(t('Seleção de rankings inválida.'), ephemeral=True)
+            return
+        self.bot.store.set_rankings(self.guild_id, values)
+        self.bot.work_queue.trigger(f"{self.guild_id}:panels")
+        view = RankingsConfigView(self.bot, self.guild_id)
+        await interaction.response.edit_message(embed=view.embed(), view=view)
+
+    @discord.ui.button(label='Preview do ranking', row=1)
+    async def preview(self, interaction, button):
+        await self.bot._panel_preview(interaction, "ranking")
+
+    @discord.ui.button(label='Config / Voltar', row=1)
+    async def back(self, interaction, button):
+        view = ServerConfigView(self.bot, self.guild_id)
         await interaction.response.edit_message(embed=view.embed(), view=view)
 
 
@@ -1361,7 +1408,7 @@ class ManguaduBot(discord.Client):
         @app_commands.describe(jogador=t('Nick do jogador'), tipo=t('Métrica do ranking'), escopo=t('Escopo do ranking: conta ou personagem TTF'))
         @app_commands.choices(tipo=[app_commands.Choice(name="Zumbis mortos", value="kills"), app_commands.Choice(name="Horas sobrevividas", value="hours"),
                                   app_commands.Choice(name="Distância (m)", value="distance"), app_commands.Choice(name="Abates com veículos", value="vehiclekills"),
-                                  app_commands.Choice(name="Armas quebradas", value="brokenweapons")],
+                                  app_commands.Choice(name="Armas quebradas", value="brokenweapons"), app_commands.Choice(name="Habilidades no nível 10", value="skills10")],
                              escopo=[app_commands.Choice(name="Conta (histórico acumulado)", value="account"), app_commands.Choice(name="Personagem (TTF)", value="character")])
         @app_commands.guild_only()
         async def player_rank(interaction: discord.Interaction, jogador: str, tipo: app_commands.Choice[str] | None = None, escopo: app_commands.Choice[str] | None = None) -> None:
@@ -1372,8 +1419,8 @@ class ManguaduBot(discord.Client):
                 await interaction.followup.send(t('Jogador/personagem não encontrado ou métrica indisponível nesta fonte.'), ephemeral=True)
                 return
             value = to_number(get_field(rank["entry"]["row"], [rank["metric"]]))
-            unit = {"hours": " h", "kills": t(' zumbis'), "distance": " m"}.get(metric, "")
-            amount = f"{value:,.2f}{unit}"
+            unit = {"hours": " h", "kills": t(' zumbis'), "distance": " m", "skills10": t(' habilidades no nível 10')}.get(metric, "")
+            amount = format_stat(value) + unit
             await interaction.followup.send(''.join(('**', discord.utils.escape_markdown(rank['entry']['nick'])[:250], t('** está em **#'), str(rank['position']), t(' de '), str(rank['total']), t('** com **'), amount, '**.')))
 
         @self.tree.command(name="localizar_veiculo", description=t('Localiza um veículo pelo ID registrado pelo FriendHost'))
@@ -1937,18 +1984,26 @@ class ManguaduBot(discord.Client):
         embed.add_field(name=t('Rede enviada'), value=byte_size(resources.get("network_tx_bytes")), inline=True)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+    async def _ranking_payload(self, guild_id, *, theme=None):
+        selected = self.store.get_rankings(guild_id)
+        data = self.pz_data
+        players = await asyncio.to_thread(data.player_rows)
+        async def optional(enabled, function, *args):
+            return await asyncio.to_thread(function, *args) if enabled else None
+        factions, deaths, skills = await asyncio.gather(
+            optional(bool({"factions", "faction_highlight"}.intersection(selected)), data.faction_rows),
+            optional("deaths" in selected, data.death_counts),
+            optional("skills10" in selected, data.skills10_rows, players),
+        )
+        return await asyncio.to_thread(build_ranking_panel, players, factions or [], deaths or {}, theme=theme, enabled=selected, skills10=skills)
+
     async def _panel_preview(self, interaction: discord.Interaction, panel_type: str) -> None:
         if not await _admin_guard(interaction, self.store):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         theme = get_draft_theme()
         if panel_type == "ranking":
-            players, factions, deaths = await asyncio.gather(
-                asyncio.to_thread(self.pz_data.player_rows),
-                asyncio.to_thread(self.pz_data.faction_rows),
-                asyncio.to_thread(self.pz_data.death_counts),
-            )
-            embeds, files = await asyncio.to_thread(build_ranking_panel, players, factions, deaths, theme=theme)
+            embeds, files = await self._ranking_payload(interaction.guild_id, theme=theme)
         else:
             overview = await self._build_panel_overview(self.registry.get_default_server())
             players = await asyncio.to_thread(self.pz_data.player_rows)
@@ -2091,12 +2146,7 @@ class ManguaduBot(discord.Client):
                 )
                 await self._upsert_panel_message(guild, config, "stats", "stats_panel_message_id", embeds, files)
             if config["channels"].get("ranking") and self.pz_data.base_path:
-                players, factions, deaths = await asyncio.gather(
-                    asyncio.to_thread(self.pz_data.player_rows),
-                    asyncio.to_thread(self.pz_data.faction_rows),
-                    asyncio.to_thread(self.pz_data.death_counts),
-                )
-                embeds, files = await asyncio.to_thread(build_ranking_panel, players, factions, deaths)
+                embeds, files = await self._ranking_payload(guild.id)
                 await self._upsert_panel_message(guild, config, "ranking", "ranking_panel_message_id", embeds, files)
 
 

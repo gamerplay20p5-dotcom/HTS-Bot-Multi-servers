@@ -17,6 +17,7 @@ from typing import Any
 from cryptography.fernet import Fernet, InvalidToken
 
 from .lore import MAX_LORE_CHARS
+from .ranking import DEFAULT_RANKINGS, normalize_rankings
 
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "bot-config.sqlite3"
@@ -24,6 +25,7 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "bot-config.
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "language": "pt-BR",
+    "ranking_metrics": DEFAULT_RANKINGS,
     "channels": {
         "admin": None, "chat": None, "evolution": None, "stats": None,
         "ranking": None, "anticheat": None, "ticket_panel": None,
@@ -57,6 +59,7 @@ def _merged_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
     config["channels"].update(raw.get("channels") if isinstance(raw.get("channels"), dict) else {})
     config["wl"].update(raw.get("wl") if isinstance(raw.get("wl"), dict) else {})
     config["kick_automatico"].update(raw.get("kick_automatico") if isinstance(raw.get("kick_automatico"), dict) else {})
+    config["ranking_metrics"] = normalize_rankings(raw.get("ranking_metrics"))
     if raw.get("language") in {"pt-BR", "en"}:
         config["language"] = raw["language"]
     for key in ("ticket_category_id", "admin_role_id", "ticket_panel_message_id", "stats_panel_message_id", "ranking_panel_message_id"):
@@ -66,6 +69,19 @@ def _merged_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
 
 
 class ConfigStore:
+    def get_rankings(self, guild_id: int) -> list[str]:
+        # Do not decompress the community lore to read a small preference.
+        with self._lock:
+            row = self._db.execute("SELECT payload FROM guild_settings WHERE guild_id=?", (guild_id,)).fetchone()
+            return normalize_rankings(json.loads(row[0]).get("ranking_metrics") if row else None)
+
+    def set_rankings(self, guild_id: int, selected: list[str]):
+        with self._lock, self._db:
+            row = self._db.execute("SELECT payload FROM guild_settings WHERE guild_id=?", (guild_id,)).fetchone()
+            config = json.loads(row[0]) if row else {}
+            config["ranking_metrics"] = normalize_rankings(selected)
+            self._db.execute("INSERT INTO guild_settings(guild_id,payload) VALUES (?,?) ON CONFLICT(guild_id) DO UPDATE SET payload=excluded.payload", (guild_id, json.dumps(config, ensure_ascii=False)))
+
     def get_language(self, guild_id: int) -> str:
         with self._lock:
             row = self._db.execute("SELECT payload FROM guild_settings WHERE guild_id = ?", (guild_id,)).fetchone()

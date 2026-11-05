@@ -190,6 +190,7 @@ class PzData:
             snapshot = self.ttf_snapshot(force=True)
             result.update({key: snapshot[key] for key in ("invalid", "deleted", "stale", "error", "updated")})
             result.update(accounts=len(snapshot["accounts"]), characters=len(snapshot["characters"]))
+            result.update({key: snapshot.get(key) for key in ("invalid_records", "invalid_reasons", "error_detail")})
         rows = self.player_rows()
         if source == "friendhost":
             result["accounts"] = len(rows)
@@ -287,6 +288,10 @@ class PzData:
     def player_rank(self, nick_input: str, metric: str = "zombiekills", scope: str = "account") -> dict | None:
         column = {"hours": "hourssurvived", "kills": "zombiekills"}.get(metric, metric)
         rows = self.player_rows()
+        if metric == "skills10":
+            if scope != "account":
+                return None
+            rows = [{"nick": item["name"], "row": {"username": item["name"], "skills10": str(item["value"])}} for item in (self.skills10_rows(rows) or [])]
         if scope == "character":
             rows = [{"nick": item["row"]["charname"] + " · " + item["id"], "row": item["row"], "provider": "ttf"}
                     for item in self.ttf_snapshot()["characters"]]
@@ -297,6 +302,27 @@ class PzData:
             if target in {entry["nick"].casefold(), get_field(entry["row"], ["username"]).casefold(), get_field(entry["row"], ["charname"]).casefold(), get_field(entry["row"], ["characterid"]).casefold()}:
                 return {"metric": column, "position": index + 1, "total": len(rows), "entry": entry, "leaderboard": rows[:10]}
         return None
+
+    def skills10_rows(self, players=None) -> list[dict] | None:
+        """Current FriendHost skill snapshot, not accumulated across lives.
+
+        None means no supported skill export; [] means valid exports with no
+        level-10 skills. Only actual known skill columns are counted.
+        """
+        if self.stats_source()[0] != "friendhost":
+            return None
+        players = self.player_rows() if players is None else players
+        results, found = [], False
+        for entry in players:
+            perks = self.latest_row(resolve_player_file(self.players_path, entry["nick"], "perks"))
+            if not perks or not any(key in perks for key in PERK_LABELS):
+                continue
+            found = True
+            skills = [key for key in PERK_LABELS if to_number(perks.get(key), -1) == 10]
+            if skills:
+                results.append({"name": entry["nick"], "value": len(skills), "skills": skills})
+        results.sort(key=lambda item: (-item["value"], item["name"].casefold()))
+        return results if found else None
 
     def online_players(self) -> list[str]:
         content = read_text_file(resolve_server_file(self.server_path, "players_online"))

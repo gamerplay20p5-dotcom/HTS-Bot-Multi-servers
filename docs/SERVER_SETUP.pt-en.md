@@ -57,9 +57,11 @@ O código TTF local relacionado (`TwisTonFireStats.lua`) confirma `lastSeenKills
 
 ### Rankings, relatórios e diagnóstico
 
+Atualização: `/config` → **Rankings publicados** agora seleciona as tabelas; o padrão compacto contém abates e sobrevivência. O ranking FriendHost de habilidades no nível 10, os números inteiros, os detalhes de registros inválidos e a correção Linux `O_PATH` estão no [guia PT/EN complementar](RANKINGS_AND_TTF_ACL.pt-en.md). As métricas TTF continuam disponíveis para consultas mesmo quando não são publicadas no painel.
+
 - `/rank jogador:<conta> tipo:<métrica> escopo:account` mostra a posição nos totais históricos da conta.
 - `/rank jogador:<characterID> tipo:<métrica> escopo:character` mostra um personagem TTF. Também aceita o nome do personagem; se informar uma conta com vários personagens, retorna o mais bem classificado naquela métrica. Use o ID para eliminar ambiguidade.
-- O painel automático e o preview usam a mesma camada. No TTF, mostram contas/personagens e cinco métricas disponíveis, com indisponibilidade explícita.
+- O painel automático e o preview usam a mesma camada e a seleção de rankings da comunidade. No TTF, mostram contas/personagens e as métricas selecionadas, com indisponibilidade explícita.
 - `/info`, `/status` e `/statuscomplete` usam o provedor selecionado. O relatório completo TTF anexa os valores por personagem, armas e categorias; limita a exportação a 1.000 personagens por conta. O status vivo/morto refere-se ao personagem visto mais recentemente pelo timestamp exportado, não à presença online. Presença online continua sendo consultada por RCON, sem deduzir conexões pelo histórico TTF.
 - `/config` → **Diagnosticar integração** consulta a API e mede o provedor local. Registros inválidos e leituras reaproveitadas do cache são contados; falha temporária do índice informa erro e pode manter a última leitura válida da mesma guild.
 
@@ -99,7 +101,9 @@ Medição local desta implementação: 25 servidores, 100 contas e dois personag
 
 ## English
 
-### Local verification / Verificação local
+### Previous release verification / Verificação da versão anterior
+
+For the current configurable-ranking and ACL regression results, see [the updated verification report](RANKINGS_AND_TTF_ACL.pt-en.md).
 
 **116 tests passed; 1 skipped.** The skipped test requires creating an actual symbolic link, which this Windows account did not permit. The suite covers Client API routes and pagination, duplicate names, independent grants, cross-guild denial, proof expiry/reuse/write failures, TTF parsing/aggregation/cache/limits, 25 concurrent guilds, FriendHost compatibility, Discord embeds, English output and diagnostics. A local HTTP server validates the real Client listing/file-write request paths without contacting production. Existing manual proof tests remain passing. There were 300 deprecation warnings from the installed test/dependency stack, including `pytest-asyncio` event-loop policy calls on Python 3.14.
 
@@ -152,6 +156,8 @@ The related local TTF client source confirms `lastSeenKills` uses `player:getZom
 Use `/rank` with account scope for cumulative history, or character scope with a character ID for an individual TTF character. A character name is also accepted; selecting an account in character scope returns its highest-ranked character for that metric. `/info`, `/status` and `/statuscomplete`, previews and scheduled rankings use the same selected provider. Complete TXT reports include up to 1,000 characters and their weapons/categories. Living/dead status follows the most recently seen character, while actual online presence continues using RCON. Historical TTF records are not treated as online players.
 
 ### Performance, diagnostics and deployment
+
+Update: [Configurable rankings and TTF ACL reads](RANKINGS_AND_TTF_ACL.pt-en.md) documents the compact two-table default, optional FriendHost level-10 skills, integer presentation, private invalid-record details and Linux `O_PATH` traversal. TTF metrics remain queryable even when omitted from published panels.
 
 The existing staggered 600-second ranking queue, three routine workers, four file threads and shared three-request API semaphore are reused. File parsing runs off the Discord event loop; query interactions are deferred before scanning. Each guild owns a five-second snapshot and a metadata cache keyed by file size, nanosecond mtime and inode. Unchanged indexes and character files are not reread. Limits: 4 MiB index, 256 KiB per character, 10,000 distinct IDs per guild, estimated 8 MiB character cache, estimated 16 MiB snapshot budget, 512 weapon/category pairs per record. Snapshots exceeding the budget or character limit are rejected with an error; a previous valid snapshot may be retained. TXT reports also enforce a size cutoff. These limits exclude total process RSS and do not guarantee a percentage of machine RAM.
 

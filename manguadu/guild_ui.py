@@ -213,6 +213,12 @@ class ServerConfigView(GuildView):
         fresh = LanguageView(self.bot, self.guild_id)
         await interaction.response.edit_message(embed=fresh.embed(), view=fresh)
 
+    @discord.ui.button(label='Rankings publicados', row=2)
+    async def rankings(self, interaction, button):
+        from .discord_bot import RankingsConfigView
+        view = RankingsConfigView(self.bot, self.guild_id)
+        await interaction.response.edit_message(embed=view.embed(), view=view)
+
     @discord.ui.button(label='Procurar servidores', style=discord.ButtonStyle.primary, row=3)
     async def discover_servers(self, interaction, button):
         from .server_setup_ui import ServerPicker
@@ -241,6 +247,30 @@ class ServerConfigView(GuildView):
             await interaction.edit_original_response(embed=self.embed(), view=self)
         except (OSError, ValueError):
             await interaction.followup.send(t('Leitura local indisponível: verifique o node Wings, a pasta Lua e as permissões do bot.'), ephemeral=True)
+
+    @discord.ui.button(label='Registros TTF inválidos', row=4)
+    async def invalid_records(self, interaction, button):
+        if interaction.guild_id != self.guild_id or not await is_admin(interaction, self.bot):
+            return
+        runtime = self.bot._runtimes.get(self.guild_id)
+        if runtime is None:
+            await interaction.response.send_message(t('Valide o vínculo primeiro.'), ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        import asyncio
+        import io
+        import json
+        from .stats.diagnostics import explanation
+        report = await asyncio.to_thread(runtime.data.diagnostics)
+        records = list(report.get("invalid_records") or [])
+        if report.get("error_detail"):
+            records.insert(0, report["error_detail"])
+        payload = {key: report.get(key) for key in ("provider", "accounts", "characters", "invalid", "stale", "error", "updated", "invalid_reasons")}
+        payload["records"] = [{**record, "message": explanation(record)} for record in records]
+        payload["details_limit"] = 50
+        payload["details_truncated"] = report["invalid"] > len(report.get("invalid_records") or [])
+        attachment = discord.File(io.BytesIO(json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")), filename="ttf-invalid-records.json")
+        await interaction.followup.send(t('Diagnóstico somente de leitura. Nenhum arquivo original foi alterado.'), file=attachment, ephemeral=True)
 
     @discord.ui.button(label='Cadastrar / editar servidor', style=discord.ButtonStyle.primary)
     async def configure(self, interaction, button):

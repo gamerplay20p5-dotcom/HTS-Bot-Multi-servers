@@ -10,6 +10,8 @@ The public product is **HTS Bot Multi servers**, the Python distribution is `hts
 
 The `/config` server picker discovers Pterodactyl ID/UUID and local Lua folders by name. Automatic proof-file linking requires an explicit independent grant from the Discord application owner; guild administrators see only their permitted servers. Integration diagnostics and native TTF Stats MP account/character rankings share the existing isolated queues. Read the [PT/EN setup, security and statistics guide](SERVER_SETUP.pt-en.md) for the complete workflow, provider semantics, limits and updates from `main`.
 
+Use **Published rankings** in `/config` or `/config_bot` to choose tables per community. The compact default is kills and survival hours. Level-10 skills use FriendHost snapshots; ranking numbers have no decimal places. TTF reads now prefer Linux `O_PATH` directory descriptors for traversal-only ACLs, and **Invalid TTF records** downloads a private per-record diagnosis. See [ranking choices, ACL behavior and tests](RANKINGS_AND_TTF_ACL.pt-en.md).
+
 ## Installation
 
 Requirements: Python 3.11+, a Discord bot token, a Pterodactyl Client API key with access to the managed servers, and readable local Wings volumes. PM2 is optional process supervision. `ffmpeg` is optional for video thumbnails.

@@ -11,6 +11,7 @@ import discord
 
 from .panel_theme import color_to_number, get_media_url, get_saved_theme, get_theme_attachments
 from .utils import get_field, to_number
+from .ranking import normalize_rankings, format_stat, RANKINGS
 
 
 def _limited_lines(lines: list[str], maximum: int = 4000) -> str:
@@ -89,52 +90,68 @@ def _death_leaderboard(player_rows: list[dict], death_rows: list[list[str]] | di
 
 
 def _ranking_description(rows: list, format_value, limit: int = 5) -> str:
-    return _limited_lines([f"{_medal(index)} **{item['name']}**\n> {format_value(item)}" for index, item in enumerate(rows[:limit])])
+    return _limited_lines([f"{_medal(index)} **{discord.utils.escape_markdown(str(item['name']))[:80]}**\n> {format_value(item)}" for index, item in enumerate(rows[:limit])], 500)
 
 
-def build_ranking_panel(player_rows: list[dict], faction_rows: list[dict], death_rows: list[list[str]] | dict[str, int] | None = None, *, theme: dict | None = None) -> tuple[list[discord.Embed], list[discord.File]]:
+def build_ranking_panel(player_rows: list[dict], faction_rows: list[dict], death_rows: list[list[str]] | dict[str, int] | None = None, *, theme: dict | None = None, enabled: list[str] | None = None, skills10: list[dict] | None = None) -> tuple[list[discord.Embed], list[discord.File]]:
     theme = theme or get_saved_theme()
     if getattr(player_rows, "provider", None) == "none":
         return [discord.Embed(title=t('Ranking indisponível'), description=t('Nenhuma fonte compatível foi encontrada para o provedor selecionado. Confira /config e o diagnóstico.'), color=0xC74343)], get_theme_attachments(theme, "ranking")
     if getattr(player_rows, "provider", None) == "ttf" or any(item.get("provider") == "ttf" for item in player_rows):
         from .stats.reports import ranking_panel
-        return ranking_panel(player_rows, theme), get_theme_attachments(theme, "ranking")
+        return ranking_panel(player_rows, theme, enabled=enabled), get_theme_attachments(theme, "ranking")
+    selected = normalize_rankings(enabled)
     primary = color_to_number(theme["primaryColor"])
     secondary = color_to_number(theme["secondaryColor"], 0xF0A93B)
     rows = [item.get("row", item) for item in player_rows]
     total_kills = sum(to_number(get_field(row, ["zombiekills"])) for row in rows)
     total_hours = sum(to_number(get_field(row, ["hourssurvived"])) for row in rows)
-    factions = _faction_leaderboard(player_rows, faction_rows)
-    deaths = _death_leaderboard(player_rows, death_rows or [])
-    kills = sorted(({"name": get_field(row, ["username"], t('Sobrevivente')), "value": to_number(get_field(row, ["zombiekills"]))} for row in rows), key=lambda item: -item["value"])
-    hours = sorted(({"name": get_field(row, ["username"], t('Sobrevivente')), "value": to_number(get_field(row, ["hourssurvived"]))} for row in rows), key=lambda item: -item["value"])
+    factions = _faction_leaderboard(player_rows, faction_rows) if {"factions", "faction_highlight"}.intersection(selected) else []
+    deaths = _death_leaderboard(player_rows, death_rows or []) if "deaths" in selected else []
+    kills = sorted(({"name": get_field(row, ["username"], t('Sobrevivente')), "value": to_number(get_field(row, ["zombiekills"]))} for row in rows), key=lambda item: -item["value"]) if "kills" in selected else []
+    hours = sorted(({"name": get_field(row, ["username"], t('Sobrevivente')), "value": to_number(get_field(row, ["hourssurvived"]))} for row in rows), key=lambda item: -item["value"]) if "hours" in selected else []
     top_factions = []
     for item in factions:
         label = item["name"] + (f" [{item['tag']}]" if item["tag"] else "")
         top_factions.append({**item, "name": label})
 
-    header = discord.Embed(title=''.join(('🏆 ', format(theme['title'], ''), format(t(' · Hall da Sobrevivência'), ''))), description=theme["description"], color=primary)
+    header = discord.Embed(title=('🏆 ' + theme['title'] + t(' · Hall da Sobrevivência'))[:256], description=theme["description"][:700], color=primary)
     header.add_field(name=t('SOBREVIVENTES'), value=f"`{len(rows)}`", inline=True)
-    header.add_field(name=t('ABATES'), value=f"`{int(total_kills):,}`".replace(",", "."), inline=True)
-    header.add_field(name=t('HORAS VIVIDAS'), value=f"`{total_hours:.1f}h`", inline=True)
+    if "kills" in selected:
+        header.add_field(name=t('ABATES'), value=f"`{format_stat(total_kills)}`", inline=True)
+    if "hours" in selected:
+        header.add_field(name=t('HORAS VIVIDAS'), value=f"`{format_stat(total_hours)}h`", inline=True)
     if image := get_media_url(theme.get("rankingBackground")):
         header.set_image(url=image)
     if image := get_media_url(theme.get("thumbnail")):
         header.set_thumbnail(url=image)
     embeds = [header]
-    sections = (
-        (kills, secondary, t('🧟 CAÇADORES DE ELITE'), lambda item: f"{int(item['value']):,}".replace(",", ".") + t(' eliminações')),
-        (hours, primary, t('⌛ VETERANOS DO APOCALIPSE'), lambda item: ''.join((format(item['value'], ''.join(('.1f',))), format(t(' horas sobrevividas'), '')))),
-        (top_factions, secondary, t('🛡️ DOMÍNIO DAS FACÇÕES'), lambda item: f"{int(item['kills']):,}".replace(",", ".") + ''.join((format(t(' abates · '), ''), format(len(item['members']), ''), format(t(' membros'), '')))),
-        ([{"name": name, "value": count} for name, count in deaths], 0xC74343, t('☠️ OS QUE MAIS VOLTARAM'), lambda item: ''.join((format(item['value'], ''), format(t(' mortes registradas'), '')))),
-    )
-    for items, color, title, formatter in sections:
-        if items:
-            embeds.append(discord.Embed(title=title, description=_ranking_description(items, formatter), color=color))
-    if factions:
+    sections = {
+        "kills": (kills, secondary, t('🧟 CAÇADORES DE ELITE'), lambda item: format_stat(item["value"]) + t(' eliminações')),
+        "hours": (hours, primary, t('⌛ VETERANOS DO APOCALIPSE'), lambda item: format_stat(item["value"]) + t(' horas sobrevividas')),
+        "factions": (top_factions, secondary, t('🛡️ DOMÍNIO DAS FACÇÕES'), lambda item: format_stat(item["kills"]) + t(' abates · ') + str(len(item["members"])) + t(' membros')),
+        "deaths": ([{"name": name, "value": count} for name, count in deaths], 0xC74343, t('☠️ OS QUE MAIS VOLTARAM'), lambda item: format_stat(item["value"]) + t(' mortes registradas')),
+        "skills10": (skills10, primary, t('Habilidades no nível 10'), lambda item: format_stat(item["value"]) + t(' habilidades no nível 10')),
+    }
+    for metric in ("distance", "vehiclekills", "brokenweapons"):
+        if metric not in selected:
+            continue
+        items = sorted(({"name": get_field(row, ["username"], t('Sobrevivente')), "value": to_number(row[metric])} for row in rows if metric in row), key=lambda item: (-item["value"], item["name"].casefold()))
+        sections[metric] = (items, secondary, t(RANKINGS[metric]), lambda item: format_stat(item["value"]))
+    for key in selected:
+        if key not in sections:
+            continue
+        items, color, title, formatter = sections[key]
+        description = _ranking_description(items, formatter) if items else t('Nenhum jogador com habilidades no nível 10.') if key == "skills10" and items == [] else t('Indisponível')
+        embeds.append(discord.Embed(title=title, description=description, color=color))
+    if "faction_highlight" in selected and factions:
         leader = factions[0]
         label = leader["name"] + (f" [{leader['tag']}]" if leader["tag"] else "")
-        embeds.append(discord.Embed(title=t('👑 FACÇÃO EM DESTAQUE'), description=''.join(('**', format(label, ''), format(t('** lidera com **'), ''), format(int(leader['kills']), ''.join((',',))), format(t(' abates**, **'), ''), format(leader['hours'], ''.join(('.1f',))), format(t(' horas** e **'), ''), format(len(leader['members']), ''), format(t(' membros**.'), ''))).replace(",", "."), color=primary))
+        embeds.append(discord.Embed(title=t('👑 FACÇÃO EM DESTAQUE'), description='**' + discord.utils.escape_markdown(label)[:100] + t('** lidera com **') + format_stat(leader['kills']) + t(' abates**, **') + format_stat(leader['hours']) + t(' horas** e **') + str(len(leader['members'])) + t(' membros**.'), color=primary))
+    elif "faction_highlight" in selected:
+        embeds.append(discord.Embed(title=t('👑 FACÇÃO EM DESTAQUE'), description=t('Indisponível'), color=primary))
+    if not selected:
+        header.description = t('Nenhum ranking selecionado. Apenas o resumo será publicado.')
     embeds[-1].set_footer(text=t('Ranking atualizado silenciosamente a cada 10 minutos'))
     embeds[-1].timestamp = datetime.now(timezone.utc)
     return embeds, get_theme_attachments(theme, "ranking")
