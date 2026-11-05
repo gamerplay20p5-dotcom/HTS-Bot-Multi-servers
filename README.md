@@ -35,7 +35,7 @@ O pacote Python ainda se chama `manguadu` para preservar o comando de inicializa
 ## Instalação local
 
 ```bash
-git clone --branch feature/hts-multi-servers https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers.git
+git clone --branch main https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers.git
 cd HTS-Bot-Multi-servers
 python -m venv .venv
 # Linux/macOS:
@@ -101,7 +101,7 @@ O orçamento de aproximadamente 2,56 GB (1% de 256 GB) deve ser confirmado no de
 
 O atualizador Python executa `git fetch`, `git pull --ff-only`, instala o projeto e compila os módulos antes de reiniciar o processo configurado em `PM2_APP_NAME`. Ele cancela a operação se encontrar alterações rastreadas locais. Para habilitar as verificações periódicas, configure `BOT_AUTO_UPDATE_ENABLED=1`; para uma atualização manual, use `/bot atualizar`.
 
-Durante os testes desta branch, mantenha `BOT_UPDATE_BRANCH=feature/hts-multi-servers`. Depois que a branch for integrada, altere para `main`. Um token GitHub só é necessário se o repositório for privado.
+Use `BOT_UPDATE_BRANCH=main` para acompanhar as atualizações publicadas. Um token GitHub só é necessário se o repositório for privado.
 
 ## Validação e resultados medidos
 

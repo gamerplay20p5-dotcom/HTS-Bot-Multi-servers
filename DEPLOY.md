@@ -20,14 +20,15 @@ Atualização e reinício da instância pelo grupo `/bot` são restritos ao prop
 
 Faça backup do `.env` e da pasta `data/` antes da troca. O `.env` e o banco `data/bot-config.sqlite3` contêm configuração local que deve ser preservada.
 
-No checkout existente, obtenha e abra a branch de migração:
+No checkout existente, obtenha e atualize a branch principal:
 
 ```bash
 git fetch --prune origin
-git switch --track origin/feature/hts-multi-servers
+git switch main
+git pull --ff-only origin main
 ```
 
-Se a branch já existir localmente, use `git switch feature/hts-multi-servers`. A URL atual do remote ainda se chama `Manguadu`; se o repositório já tiver sido renomeado no GitHub, use a URL clone exibida na página atual do repositório.
+Se a branch ainda não existir localmente, use `git switch --track origin/main`. A URL atual do repositório é `https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers.git`.
 
 Crie o ambiente e instale o pacote Python:
 
@@ -56,7 +57,7 @@ Configure no `.env` da VM:
 ```env
 PM2_APP_NAME=friendhost-pz-bot
 BOT_PM2_RUNTIME=python
-BOT_UPDATE_BRANCH=feature/hts-multi-servers
+BOT_UPDATE_BRANCH=main
 ```
 
 Se a instalação anterior tiver um processo Node chamado `manguadu`, remova somente esse processo depois de validar a instalação Python. Os arquivos `.env` e `data/` permanecem na pasta:
@@ -71,7 +72,7 @@ pm2 startup
 Em uma máquina nova, clone a branch de teste e instale antes de iniciar o PM2:
 
 ```bash
-git clone --branch feature/hts-multi-servers https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers.git Friendhost-PZ-Bot
+git clone --branch main https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers.git Friendhost-PZ-Bot
 cd Friendhost-PZ-Bot
 python3 -m venv .venv
 . .venv/bin/activate
@@ -82,7 +83,7 @@ nano .env
 
 Depois, use o comando `pm2 start` acima. Confira `pm2 logs friendhost-pz-bot` e execute `/bot status` no Discord. Ao iniciar, o bot publica os slash commands Python do aplicativo.
 
-Quando esta branch for integrada em `main`, altere `BOT_UPDATE_BRANCH=main` no `.env` da VM e reinicie o processo.
+Para acompanhar a versão publicada, mantenha `BOT_UPDATE_BRANCH=main` no `.env` do dedicado.
 
 ## Atualizações
 

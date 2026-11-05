@@ -8,14 +8,14 @@ HTS Bot Multi servers is a Python Discord bot for managing multiple Project Zomb
 
 The public product is **HTS Bot Multi servers**, the Python distribution is `hts-bot-multi-servers`, and the Python module remains `manguadu`. Start it with `python -m manguadu --bot`. The FriendHost mod retains its own name. Changing the Discord application's visible name requires the owner to edit it in the Developer Portal.
 
-The new `/config` server picker discovers Pterodactyl ID/UUID and local Lua folders by name. Automatic proof-file linking requires an explicit independent grant from the Discord application owner; guild administrators see only their permitted servers. Integration diagnostics and native TTF Stats MP account/character rankings share the existing isolated queues. Read the [PT/EN setup, security and statistics guide](SERVER_SETUP.pt-en.md) for the complete workflow, provider semantics, limits and the unpublished development branch.
+The `/config` server picker discovers Pterodactyl ID/UUID and local Lua folders by name. Automatic proof-file linking requires an explicit independent grant from the Discord application owner; guild administrators see only their permitted servers. Integration diagnostics and native TTF Stats MP account/character rankings share the existing isolated queues. Read the [PT/EN setup, security and statistics guide](SERVER_SETUP.pt-en.md) for the complete workflow, provider semantics, limits and updates from `main`.
 
 ## Installation
 
 Requirements: Python 3.11+, a Discord bot token, a Pterodactyl Client API key with access to the managed servers, and readable local Wings volumes. PM2 is optional process supervision. `ffmpeg` is optional for video thumbnails.
 
 ```bash
-git clone --branch feature/hts-multi-servers https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers.git
+git clone --branch main https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers.git
 cd HTS-Bot-Multi-servers
 python3 -m venv .venv
 source .venv/bin/activate
@@ -138,7 +138,7 @@ pm2 save
 pm2 logs hts-bot-multi-servers --lines 100
 ```
 
-Set `PM2_APP_NAME` to the actual process name and `BOT_UPDATE_BRANCH=feature/hts-multi-servers` while deploying this branch; use `main` after merging it. Existing PM2 names may remain unchanged. Run a single bot process for the token.
+Set `PM2_APP_NAME` to the actual process name and `BOT_UPDATE_BRANCH=main` to follow published updates. Existing PM2 names may remain unchanged. Run a single bot process for the token.
 
 Back up `.env`, `data/bot-config.sqlite3`, `data/bot-config.sqlite3.key` and `data/guilds/`. The database stores guild configuration and encrypted Gemini keys; its key file is needed to decrypt them. Guild directories contain themes, player links, automations, anticheat state, cursors and compressed drafts. No production data or credentials should be committed.
 

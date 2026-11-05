@@ -73,11 +73,12 @@ Arquivos que mudaram durante a leitura ou terminaram sem uma quebra de linha sã
 
 ### Atualização e validação
 
-Esta implementação está na branch local `feature/ttf-stats-discord-setup`. Ela **não foi enviada nem implantada automaticamente**. Só execute os passos abaixo depois de revisar, publicar a branch e validar a instalação de destino. Preserve `.env`, `data/bot-config.sqlite3`, a chave `.key` e `data/guilds/` no backup. As tabelas novas são criadas de forma aditiva, sem apagar configurações existentes.
+A implementação é distribuída pela `main`, conforme autorização do proprietário. A publicação no GitHub não implanta o bot no dedicado. Antes de atualizar a instalação de destino, preserve `.env`, `data/bot-config.sqlite3`, a chave `.key` e `data/guilds/` no backup. As tabelas novas são criadas de forma aditiva, sem apagar configurações existentes.
 
 ```bash
 git fetch origin
-git switch feature/ttf-stats-discord-setup
+git switch main
+git pull --ff-only origin main
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python -m pytest -q
 .venv/bin/python -m compileall -q manguadu scripts
@@ -86,7 +87,7 @@ pm2 save
 pm2 logs hts-bot-multi-servers --lines 50
 ```
 
-Use o nome efetivo do seu processo PM2 se for diferente. Atualize `BOT_UPDATE_BRANCH` quando decidir adotar esta branch para o atualizador. Não reinicie Wings, Docker ou PZ para esta atualização. A implementação local não conecta ao Node0 nem valida o servidor Runners em produção; faça a confirmação pelo diagnóstico e pelo preview antes da troca do processo em uso.
+Use o nome efetivo do seu processo PM2 se for diferente. Configure `BOT_UPDATE_BRANCH=main` para o atualizador. Não reinicie Wings, Docker ou PZ para esta atualização. A implementação local não conecta ao Node0 nem valida o servidor Runners em produção; faça a confirmação pelo diagnóstico e pelo preview antes da troca do processo em uso.
 
 Para reproduzir uma carga sintética local sem acessar a produção:
 
@@ -156,4 +157,4 @@ The existing staggered 600-second ranking queue, three routine workers, four fil
 
 Files changed during a read or without a final newline are treated as incomplete writes. A previous valid record may be reused and flagged stale; removed/deleted records are excluded. Panels report invalid/stale data and diagnostics show API/local-volume/provider failures, measured counts and available metrics. The next valid scan recovers automatically. No duplicate processed history is stored on disk.
 
-The implementation is on local branch `feature/ttf-stats-discord-setup`; **no automatic push or deployment was performed**. Back up `.env`, SQLite, its encryption key and guild state before adoption. After reviewing/publishing the branch, use the update/test/PM2 commands in the Portuguese section and adjust the PM2 process name if needed. Database changes are additive. Do not restart Wings, Docker or PZ. Node0/Runners production validation was not available from this Windows workspace; use Discord diagnostics and ranking preview to verify the actual installation. The synthetic benchmark command above uses temporary files only and excludes network and production RSS.
+The implementation is distributed from `main` with the owner's authorization. GitHub publication does not deploy the bot on the dedicated machine. Back up `.env`, SQLite, its encryption key and guild state before adoption. Use the update/test/PM2 commands in the Portuguese section and adjust the PM2 process name if needed. Set `BOT_UPDATE_BRANCH=main` to follow published updates. Database changes are additive. Do not restart Wings, Docker or PZ. Node0/Runners production validation was not available from this Windows workspace; use Discord diagnostics and ranking preview to verify the actual installation. The synthetic benchmark command above uses temporary files only and excludes network and production RSS.
