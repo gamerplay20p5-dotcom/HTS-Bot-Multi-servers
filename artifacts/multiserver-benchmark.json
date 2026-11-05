@@ -1,0 +1,13 @@
+{
+  "date": "2026-11-05",
+  "environment": "Windows development workspace; temporary synthetic files",
+  "command": "python -m scripts.benchmark_multiserver --servers 25 --players 200 --history 200",
+  "servers": 25,
+  "players_per_server": 200,
+  "history_rows_per_player": 200,
+  "concurrent_scans": 3,
+  "first_scan_seconds": 31.202,
+  "cached_scan_seconds": 4.986,
+  "python_heap_peak_mib": 6.06,
+  "limitations": "Measures local CSV reads, cache and ranking rendering. Excludes total process RSS, real Discord/Pterodactyl traffic and production server load. It is not a production RAM guarantee."
+}

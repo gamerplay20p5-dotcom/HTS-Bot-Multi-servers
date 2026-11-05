@@ -14,6 +14,7 @@ import aiohttp
 import discord
 
 from .utils import clean_text
+from .tenant_scope import tenant_path
 
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -75,23 +76,23 @@ def _write(path: Path, value: dict) -> None:
 
 
 def get_saved_theme() -> dict:
-    return _read(THEME_FILE, DEFAULT_THEME)
+    return _read(tenant_path("panel-theme.json", THEME_FILE), DEFAULT_THEME)
 
 
 def get_draft_theme() -> dict:
-    return _read(DRAFT_FILE, get_saved_theme())
+    return _read(tenant_path("panel-theme-draft.json", DRAFT_FILE), get_saved_theme())
 
 
 def update_draft_theme(patch: dict) -> dict:
     theme = normalize_theme({**get_draft_theme(), **patch})
-    _write(DRAFT_FILE, theme)
+    _write(tenant_path("panel-theme-draft.json", DRAFT_FILE), theme)
     return theme
 
 
 def save_draft_theme() -> dict:
     theme = get_draft_theme()
-    _write(THEME_FILE, theme)
-    _write(DRAFT_FILE, theme)
+    _write(tenant_path("panel-theme.json", THEME_FILE), theme)
+    _write(tenant_path("panel-theme-draft.json", DRAFT_FILE), theme)
     return theme
 
 
@@ -190,10 +191,10 @@ async def store_panel_media(kind: str, *, url: str = "", attachment: discord.Att
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("Informe uma URL HTTP/HTTPS válida.")
         if re.search(r"\.(?:mp4|webm|mov|mkv)(?:$|\?)", external, re.I):
-            MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+            tenant_path("panel-media", MEDIA_DIR).mkdir(parents=True, exist_ok=True)
             suffix = Path(parsed.path).suffix.lower() or ".mp4"
-            source = MEDIA_DIR / f"{kind}-{int(time.time() * 1000)}{suffix}"
-            output = MEDIA_DIR / f"{kind}-{int(time.time() * 1000)}.png"
+            source = tenant_path("panel-media", MEDIA_DIR) / f"{kind}-{int(time.time() * 1000)}{suffix}"
+            output = tenant_path("panel-media", MEDIA_DIR) / f"{kind}-{int(time.time() * 1000)}.png"
             try:
                 await _download(external, source)
                 await _video_thumbnail(source, output)
@@ -203,13 +204,13 @@ async def store_panel_media(kind: str, *, url: str = "", attachment: discord.Att
         return {"url": external, "filePath": "", "filename": ""}
     if attachment is None or not attachment.url:
         raise ValueError("Envie um arquivo ou informe uma URL.")
-    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    tenant_path("panel-media", MEDIA_DIR).mkdir(parents=True, exist_ok=True)
     filename = f"{kind}-{int(time.time() * 1000)}-{_safe_filename(attachment.filename, kind)}"
-    destination = MEDIA_DIR / filename
+    destination = tenant_path("panel-media", MEDIA_DIR) / filename
     content_type, _ = await _download(attachment.url, destination)
     is_video = content_type.startswith("video/") or Path(attachment.filename).suffix.lower() in {".mp4", ".webm", ".mov", ".mkv"}
     if is_video:
-        output = MEDIA_DIR / f"{kind}-{int(time.time() * 1000)}.png"
+        output = tenant_path("panel-media", MEDIA_DIR) / f"{kind}-{int(time.time() * 1000)}.png"
         try:
             await _video_thumbnail(destination, output)
         finally:

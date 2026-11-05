@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .tenant_scope import getenv
+
 import asyncio
 from datetime import datetime
 import json
@@ -18,7 +20,7 @@ VOLUME_PATTERN = re.compile(r"/var/lib/pterodactyl/volumes/([^/]+)", re.I)
 
 
 def is_local_fallback_enabled() -> bool:
-    value = clean_text(os.getenv("PTERO_LOCAL_FALLBACK_ENABLED", "1")).casefold()
+    value = clean_text(getenv("PTERO_LOCAL_FALLBACK_ENABLED", "1")).casefold()
     return value not in {"0", "false", "nao", "não", "no", "off"}
 
 
@@ -29,9 +31,9 @@ def get_volume_id_from_path(value: str | None) -> str:
 
 def get_known_volume_id() -> str:
     for value in (
-        os.getenv("PTERO_VOLUME_ID"), get_volume_id_from_path(os.getenv("PZ_LUA_PATH")),
-        get_volume_id_from_path(os.getenv("PZ_SAVE_ROOT")), get_volume_id_from_path(os.getenv("CSV_BASE_PATH")),
-        get_volume_id_from_path(os.getenv("ANTICHEAT_CSV_PATH")),
+        getenv("PTERO_VOLUME_ID"), get_volume_id_from_path(getenv("PZ_LUA_PATH")),
+        get_volume_id_from_path(getenv("PZ_SAVE_ROOT")), get_volume_id_from_path(getenv("CSV_BASE_PATH")),
+        get_volume_id_from_path(getenv("ANTICHEAT_CSV_PATH")),
     ):
         if clean_text(value):
             return clean_text(value)
@@ -40,8 +42,8 @@ def get_known_volume_id() -> str:
 
 def get_server_identifiers() -> list[str]:
     values = (
-        os.getenv("PTERO_DOCKER_CONTAINER"), os.getenv("PTERO_SERVER_UUID"),
-        os.getenv("PTERO_VOLUME_ID"), get_known_volume_id(), os.getenv("PTERO_SERVER_ID"),
+        getenv("PTERO_DOCKER_CONTAINER"), getenv("PTERO_SERVER_UUID"),
+        getenv("PTERO_VOLUME_ID"), get_known_volume_id(), getenv("PTERO_SERVER_ID"),
     )
     return list(dict.fromkeys(clean_text(value) for value in values if clean_text(value)))
 
@@ -101,7 +103,7 @@ def score_docker_container(container: dict[str, Any], identifiers: list[str] | N
 
 
 async def list_docker_containers() -> dict[str, Any]:
-    docker = clean_text(os.getenv("DOCKER_BIN")) or "docker"
+    docker = clean_text(getenv("DOCKER_BIN")) or "docker"
     result = await run_local_process(docker, ["ps", "-a", "--format", "{{json .}}"], timeout=15)
     return {**result, "containers": parse_docker_ps_json(result["stdout"])} if result["ok"] else result
 
@@ -109,7 +111,7 @@ async def list_docker_containers() -> dict[str, Any]:
 async def find_docker_container() -> dict[str, Any]:
     if not is_local_fallback_enabled():
         return {"ok": False, "error": "Fallback local/Docker desativado."}
-    configured = clean_text(os.getenv("PTERO_DOCKER_CONTAINER"))
+    configured = clean_text(getenv("PTERO_DOCKER_CONTAINER"))
     if configured:
         return {"ok": True, "container": {"id": configured, "names": configured, "configured": True}}
     listed = await list_docker_containers()
@@ -154,7 +156,7 @@ async def fetch_docker_resources() -> dict[str, Any]:
     container_id, found = await _container_id()
     if not container_id:
         return found
-    docker = clean_text(os.getenv("DOCKER_BIN")) or "docker"
+    docker = clean_text(getenv("DOCKER_BIN")) or "docker"
     inspected = await run_local_process(docker, ["inspect", container_id], timeout=15)
     if not inspected["ok"]:
         return inspected
@@ -196,7 +198,7 @@ async def manage_docker_server(action: str) -> dict[str, Any]:
     container_id, found = await _container_id()
     if not container_id:
         return found
-    docker = clean_text(os.getenv("DOCKER_BIN")) or "docker"
+    docker = clean_text(getenv("DOCKER_BIN")) or "docker"
     result = await run_local_process(docker, [normalized, container_id], timeout=120)
     container = found["container"]
     return {

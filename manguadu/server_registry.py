@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .utils import clean_text, to_number
+from .tenant_scope import current_scope
 
 
 logger = logging.getLogger(__name__)
@@ -111,12 +112,17 @@ class ServerRegistry:
         return servers or [self._from_environment()]
 
     def list_servers(self) -> list[dict[str, Any]]:
+        scope = current_scope()
+        if scope is not None:
+            return [scope.server] if scope.server is not None else []
         if self._cache is None:
             self._cache = self._load()
         return list(self._cache)
 
     def get_server(self, target: str | dict[str, Any] | None = None) -> dict[str, Any] | None:
         servers = self.list_servers()
+        if not servers:
+            return None
         if not target:
             return servers[0]
         if isinstance(target, dict):
@@ -125,7 +131,10 @@ class ServerRegistry:
         return next((server for server in servers if server["id"].lower() == wanted), None)
 
     def get_default_server(self) -> dict[str, Any]:
-        return self.list_servers()[0]
+        servers = self.list_servers()
+        if not servers:
+            raise RuntimeError("Nenhum servidor PZ vinculado a este Discord. Use /config.")
+        return servers[0]
 
     def has_multiple_servers(self) -> bool:
         return len(self.list_servers()) > 1

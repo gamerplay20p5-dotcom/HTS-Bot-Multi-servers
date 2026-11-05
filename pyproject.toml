@@ -3,9 +3,11 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "friendhost-pz-bot"
-version = "0.1.0"
-description = "Bot Discord em Python para servidores Project Zomboid com FriendHost"
+name = "hts-bot-multi-servers"
+version = "0.2.0"
+description = "Multi-server Project Zomboid Discord bot with isolated Wings data, FriendHost rankings, RCON, whitelist and automation"
+readme = "README.md"
+authors = [{name = "Malaio/Erick"}]
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.9,<4",
@@ -17,6 +19,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
+
+[project.urls]
+Repository = "https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers"
+Documentation = "https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers#readme"
 
 [tool.setuptools.packages.find]
 include = ["manguadu*"]

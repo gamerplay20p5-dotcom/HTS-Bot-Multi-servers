@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from .tenant_scope import getenv, scoped_guilds, current_scope, allowed_path
+
 import csv
+import asyncio
 import io
 import json
 import logging
@@ -29,20 +32,20 @@ DEFAULT_TIMEZONE = "America/Sao_Paulo"
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    value = clean_text(os.getenv(name, "1" if default else "0")).casefold()
+    value = clean_text(getenv(name, "1" if default else "0")).casefold()
     return value not in {"0", "false", "nao", "não", "no", "off"}
 
 
 def get_pending_csv_path() -> Path:
-    return Path(os.getenv("ANTICHEAT_CSV_PATH", "").strip() or DEFAULT_PENDING_FILE)
+    return Path(getenv("ANTICHEAT_CSV_PATH", "").strip() or DEFAULT_PENDING_FILE)
 
 
 def get_pending_ptero_path() -> str:
-    return clean_text(os.getenv("ANTICHEAT_PTERO_CSV_PATH"))
+    return clean_text(getenv("ANTICHEAT_PTERO_CSV_PATH"))
 
 
 def get_alert_timezone() -> str:
-    return clean_text(os.getenv("ANTICHEAT_TIMEZONE")) or clean_text(os.getenv("AUTOMATION_TIMEZONE")) or clean_text(os.getenv("TZ")) or DEFAULT_TIMEZONE
+    return clean_text(getenv("ANTICHEAT_TIMEZONE")) or clean_text(getenv("AUTOMATION_TIMEZONE")) or clean_text(getenv("TZ")) or DEFAULT_TIMEZONE
 
 
 def _zone() -> ZoneInfo | timezone:
@@ -101,7 +104,7 @@ def parse_alert_timestamp(value: str, time_zone: str | None = None) -> datetime 
 
 
 def is_alert_recent(alert: dict, now: datetime | None = None) -> bool:
-    max_age = max(0, to_number(os.getenv("ANTICHEAT_MAX_ALERT_AGE_MINUTES"), 10)) * 60
+    max_age = max(0, to_number(getenv("ANTICHEAT_MAX_ALERT_AGE_MINUTES"), 10)) * 60
     if not max_age: return True
     parsed = parse_alert_timestamp(alert.get("timestamp", ""))
     if parsed is None: return True
@@ -173,8 +176,12 @@ class AntiCheatMonitor:
 
     async def _source(self) -> dict:
         local = get_pending_csv_path()
+        if not allowed_path(local):
+            return {"ok": False, "error": "Arquivo anticheat fora do volume autorizado."}
         if local.is_file():
-            try: return {"ok": True, "type": "local", "path": str(local), "content": local.read_text(encoding="utf-8-sig")}
+            if local.stat().st_size > 8 * 1024 * 1024:
+                return {"ok": False, "error": "Pending anticheat excedeu 8 MiB; requer manutenção do arquivo.", "path": str(local)}
+            try: return {"ok": True, "type": "local", "path": str(local), "content": await asyncio.to_thread(local.read_text, encoding="utf-8-sig")}
             except (OSError, UnicodeError) as exc: return {"ok": False, "path": str(local), "error": str(exc)}
         remote = get_pending_ptero_path()
         if not remote: return {"ok": False, "missing": True, "path": str(local)}
@@ -237,13 +244,13 @@ class AntiCheatMonitor:
                 return
             self._missing_warned = False
             original = source["content"]
-            alerts = parse_alerts(original)
+            alerts = await asyncio.to_thread(parse_alerts, original)
             if not alerts: return
-            state = _read_state(self.state_path)
+            state = await asyncio.to_thread(_read_state, self.state_path)
             sent_keys, recent_groups = set(state["sentKeys"]), state["recentGroups"]
             if not state["initialized"] and _env_bool("ANTICHEAT_IGNORE_EXISTING_ON_START", True):
                 sent_keys.update(alert_key(alert) for alert in alerts)
-                _save_state(self.state_path, list(sent_keys), recent_groups)
+                await asyncio.to_thread(_save_state, self.state_path, list(sent_keys), recent_groups)
                 await self._clear_source(source, original)
                 logger.info("PZAntiCheat iniciado ignorando %d alertas ja existentes.", len(alerts))
                 return
@@ -256,20 +263,21 @@ class AntiCheatMonitor:
             if not unseen:
                 await self._clear_source(source, original)
                 return
-            cooldown = max(0, to_number(os.getenv("ANTICHEAT_ALERT_COOLDOWN_MINUTES"), 10)) * 60
+            cooldown = max(0, to_number(getenv("ANTICHEAT_ALERT_COOLDOWN_MINUTES"), 10)) * 60
             pending = [group for group in group_alerts(recent) if cooldown == 0 or now.timestamp() - to_number(recent_groups.get(group["key"])) >= cooldown]
             if not pending:
-                _save_state(self.state_path, list(sent_keys), recent_groups)
+                await asyncio.to_thread(_save_state, self.state_path, list(sent_keys), recent_groups)
                 await self._clear_source(source, original)
                 return
-            maximum = max(1, min(25, int(to_number(os.getenv("ANTICHEAT_MAX_ALERTS_PER_TICK"), 10))))
+            maximum = max(1, min(25, int(to_number(getenv("ANTICHEAT_MAX_ALERTS_PER_TICK"), 10))))
             targets = []
-            for guild in bot.guilds:
-                channel_id = bot.store.get_settings(guild.id)["channels"].get("anticheat")
+            for guild in scoped_guilds(bot):
+                channels = bot.store.get_settings(guild.id)["channels"]
+                channel_id = channels.get("anticheat") or channels.get("admin")
                 channel = guild.get_channel(channel_id) if channel_id else None
                 if isinstance(channel, discord.TextChannel): targets.append(channel)
-            fallback_id = clean_text(os.getenv("ANTICHEAT_ALERT_CHANNEL_ID") or os.getenv("ID_CANAL_ADMIN"))
-            if not targets and fallback_id.isdigit():
+            fallback_id = clean_text(getenv("ANTICHEAT_ALERT_CHANNEL_ID") or getenv("ID_CANAL_ADMIN"))
+            if current_scope() is None and not targets and fallback_id.isdigit():
                 try:
                     channel = bot.get_channel(int(fallback_id)) or await bot.fetch_channel(int(fallback_id))
                     if isinstance(channel, discord.TextChannel): targets.append(channel)
@@ -288,7 +296,7 @@ class AntiCheatMonitor:
                     logger.exception("Falha ao enviar alertas anticheat para canal %s", channel.id)
             if not delivered: return
             for group in pending: recent_groups[group["key"]] = now.timestamp()
-            _save_state(self.state_path, list(sent_keys), recent_groups)
+            await asyncio.to_thread(_save_state, self.state_path, list(sent_keys), recent_groups)
             await self._clear_source(source, original)
         finally:
             self._busy = False

@@ -1,6 +1,20 @@
-# Deploy do Friendhost - PZ/Bot
+# Deploy do HTS Bot Multi servers
 
 O bot é executado integralmente em Python. O PM2 atua como supervisor do processo Python; Discord, comandos, tickets, WL, tarefas e atualização ficam no pacote `manguadu`.
+
+## Instância compartilhada no dedicado
+
+Use um processo Python para todos os Discords. A chave `PTERO_API_KEY` e a URL `PTERO_URL` ficam no `.env` do dedicado; cada administrador cadastra somente o seu ID/UUID no `/config`. O bot valida o acesso àquele servidor com um código em `friendhost-discord-link.txt` na raiz do volume e verifica se o UUID retornado pela API corresponde ao volume informado. Um UUID não pode ser cadastrado por dois Discords.
+
+`PTERO_VOLUMES_ROOT=/var/lib/pterodactyl/volumes` define a raiz de leitura local. A conta Linux do bot precisa acessar os volumes cadastrados. Se houver Wings em outra máquina, monte esses volumes nessa raiz; leitura remota contínua de logs pela API não é implementada. A pasta Lua do formulário é relativa a cada volume. Não use o `.env` para alternar UUIDs enquanto o processo roda.
+
+`GUILD_ID` é opcional no modo compartilhado. Se preenchido, é a única guild que pode importar os canais e o UUID da configuração antiga. Comandos também são registrados globalmente para os outros Discords. Os arquivos de tema, automações, anticheat, vínculos de jogadores, rascunhos e cursores ficam em `data/guilds/<guild_id>/`. Preserve essa pasta, `data/bot-config.sqlite3` e `data/bot-config.sqlite3.key` nos backups.
+
+O bot mantém três trabalhadores de rotina, quatro threads de arquivos, no máximo três requisições Pterodactyl e seis conexões RCON concorrentes. Status/ranking têm cadência de 600 segundos e fases independentes. Em falhas consecutivas, o trabalho recebe espera progressiva; não há execução acumulada de todos os ciclos perdidos. HTTP 429 da API compartilhada introduz espera entre chamadas. O espelho de chat resume excessos em cada lote; os logs completos continuam no PZ. `/config` exibe o atraso em bytes.
+
+O uso abaixo de 1% dos 256 GB precisa ser medido na produção. Se o bot for um serviço systemd próprio, configure `MemoryHigh=2G` e `MemoryMax=2500M` no serviço para impor um orçamento conservador; atingir o teto pode encerrar o processo. Em PM2, `pm2 restart friendhost-pz-bot --max-memory-restart 2200M` configura uma reinicialização ao superar esse limiar, mas não é um limite rígido. Monitore o RSS e o atraso dos logs antes de ampliar a carga. Evite aplicar um limite ao serviço PM2 inteiro quando ele supervisionar outros aplicativos.
+
+Atualização e reinício da instância pelo grupo `/bot` são restritos ao proprietário do aplicativo Discord, porque afetam todos os servidores. Os administradores de cada guild continuam limitados ao próprio servidor PZ.
 
 ## Atualizar uma instalação existente
 
@@ -10,10 +24,10 @@ No checkout existente, obtenha e abra a branch de migração:
 
 ```bash
 git fetch --prune origin
-git switch --track origin/migration/python-runtime
+git switch --track origin/feature/hts-multi-servers
 ```
 
-Se a branch já existir localmente, use `git switch migration/python-runtime`. A URL atual do remote ainda se chama `Manguadu`; se o repositório já tiver sido renomeado no GitHub, use a URL clone exibida na página atual do repositório.
+Se a branch já existir localmente, use `git switch feature/hts-multi-servers`. A URL atual do remote ainda se chama `Manguadu`; se o repositório já tiver sido renomeado no GitHub, use a URL clone exibida na página atual do repositório.
 
 Crie o ambiente e instale o pacote Python:
 
@@ -42,7 +56,7 @@ Configure no `.env` da VM:
 ```env
 PM2_APP_NAME=friendhost-pz-bot
 BOT_PM2_RUNTIME=python
-BOT_UPDATE_BRANCH=migration/python-runtime
+BOT_UPDATE_BRANCH=feature/hts-multi-servers
 ```
 
 Se a instalação anterior tiver um processo Node chamado `manguadu`, remova somente esse processo depois de validar a instalação Python. Os arquivos `.env` e `data/` permanecem na pasta:
@@ -57,7 +71,7 @@ pm2 startup
 Em uma máquina nova, clone a branch de teste e instale antes de iniciar o PM2:
 
 ```bash
-git clone --branch migration/python-runtime https://github.com/gamerplay20p5-dotcom/Manguadu.git Friendhost-PZ-Bot
+git clone --branch feature/hts-multi-servers https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers.git Friendhost-PZ-Bot
 cd Friendhost-PZ-Bot
 python3 -m venv .venv
 . .venv/bin/activate

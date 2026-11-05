@@ -7,6 +7,7 @@ import logging
 import re
 from pathlib import Path
 from typing import Any
+from .tenant_scope import allowed_path, current_scope
 
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,12 @@ def get_field(record: dict[str, str] | None, keys: list[str] | tuple[str, ...], 
 def read_text_file(file_path: str | Path | None) -> str:
     if not file_path:
         return ""
+    if not allowed_path(file_path):
+        return ""
     try:
+        if current_scope() is not None and Path(file_path).stat().st_size > 8 * 1024 * 1024:
+            logger.warning("Arquivo excede o limite de leitura direta de 8 MiB: %s", file_path)
+            return ""
         return Path(file_path).read_text(encoding="utf-8-sig")
     except FileNotFoundError:
         return ""
@@ -80,24 +86,31 @@ def read_csv_rows(file_path: str | Path | None) -> list[dict[str, str]]:
 
 
 def read_latest_csv_row(file_path: str | Path | None) -> dict[str, str] | None:
+    """Read the header and a bounded tail instead of replaying years of CSV history."""
     if not file_path:
         return None
-    try:
-        with Path(file_path).open("r", encoding="utf-8-sig", newline="") as stream:
-            reader = csv.reader(stream, delimiter=";")
-            headers = None
-            latest = None
-            for row in reader:
-                cells = [cell.strip() for cell in row]
-                if not any(cells):
-                    continue
-                if headers is None:
-                    headers = [cell.lstrip("\ufeff\u200b").lower() for cell in cells]
-                    continue
-                latest = {header: cells[index] if index < len(cells) else "" for index, header in enumerate(headers) if header}
-            return latest
-    except FileNotFoundError:
+    if not allowed_path(file_path):
         return None
+    try:
+        import io
+        with Path(file_path).open("rb") as stream:
+            header = stream.readline(65536)
+            if not header.endswith(b"\n") and len(header) >= 65536:
+                return None
+            header_end = stream.tell()
+            stream.seek(0, 2)
+            start = max(header_end, stream.tell() - 256 * 1024)
+            stream.seek(start)
+            tail = stream.read(256 * 1024)
+            if start > header_end:
+                tail = tail.partition(b"\n")[2]
+        headers = next(csv.reader(io.StringIO(header.decode("utf-8-sig")), delimiter=";"), [])
+        headers = [cell.strip().lstrip("\ufeff\u200b").lower() for cell in headers]
+        latest = None
+        for row in csv.reader(io.StringIO(tail.decode("utf-8")), delimiter=";"):
+            if any(cell.strip() for cell in row):
+                latest = {key: row[i].strip() if i < len(row) else "" for i, key in enumerate(headers) if key}
+        return latest
     except (OSError, UnicodeError, csv.Error) as exc:
-        logger.error("Falha ao ler ultima linha CSV %s: %s", file_path, exc)
+        logger.debug("Falha ao ler ultima linha CSV %s: %s", file_path, exc)
         return None
