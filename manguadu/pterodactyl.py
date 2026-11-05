@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import asyncio
+import time
 from typing import Any
 from urllib.parse import quote
 
@@ -10,6 +12,7 @@ import aiohttp
 
 from .server_registry import describe_missing_config
 from .utils import clean_text
+from .tenant_scope import current_scope
 
 
 def extract_ptero_error(result: dict[str, Any] | None) -> str:
@@ -27,8 +30,14 @@ def extract_ptero_error(result: dict[str, Any] | None) -> str:
 
 
 class PterodactylClient:
-    def __init__(self, server: dict[str, Any], session: aiohttp.ClientSession | None = None):
+    def __init__(self, server: dict[str, Any], session: aiohttp.ClientSession | None = None, limiter=None):
         self.server = server
+        scope = current_scope()
+        bot = getattr(getattr(scope, "runtime", None), "bot", None)
+        self._bot = bot
+        if session is None and bot is not None:
+            session = bot._ptero_session
+        self._limiter = limiter or (bot._ptero_limiter if bot is not None else asyncio.Semaphore(1))
         self._session = session
         self._owns_session = session is None
 
@@ -48,7 +57,7 @@ class PterodactylClient:
         server_id = clean_text(ptero.get("serverId"))
         if not base or not server_id:
             return None
-        return f"{base}/api/client/servers/{quote(server_id, safe='')}/{endpoint}"
+        return f"{base}/api/client/servers/{quote(server_id, safe='')}" + (f"/{endpoint}" if endpoint else "")
 
     async def request(
         self, endpoint: str, *, method: str = "GET", body: dict[str, Any] | None = None,
@@ -62,7 +71,7 @@ class PterodactylClient:
         headers = {
             "Authorization": f"Bearer {self.server['ptero']['apiKey']}",
             "Accept": "Application/vnd.pterodactyl.v1+json",
-            "User-Agent": "FriendhostPZBot-Python/0.1",
+            "User-Agent": "HTSBotMultiServers-Python/0.2",
         }
         data = None
         if raw_body is not None:
@@ -72,16 +81,33 @@ class PterodactylClient:
             headers["Content-Type"] = "application/json"
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         try:
-            async with self._session.request(
+            if self._bot is not None:
+                delay = self._bot._ptero_retry_at - time.monotonic()
+                if delay > 0:
+                    await asyncio.sleep(min(60, delay))
+            async with self._limiter, self._session.request(
                 method, self.build_url(endpoint), headers=headers, data=data,
-                timeout=aiohttp.ClientTimeout(total=timeout),
+                timeout=aiohttp.ClientTimeout(total=timeout), allow_redirects=False,
             ) as response:
-                content = await response.text()
+                # API responses and log exports must not grow process memory without bounds.
+                chunks = bytearray()
+                async for chunk in response.content.iter_chunked(65536):
+                    chunks.extend(chunk)
+                    if len(chunks) > 8 * 1024 * 1024:
+                        return {"ok": False, "status": response.status, "error": "Resposta da API excedeu 8 MiB; use leitura local do volume para arquivos grandes."}
+                content = chunks.decode("utf-8", errors="replace")
+                if response.status == 429 and self._bot is not None:
+                    try:
+                        delay = max(1, min(60, float(response.headers.get("Retry-After", "10"))))
+                    except ValueError:
+                        delay = 10
+                    self._bot._ptero_retry_at = time.monotonic() + delay
                 try:
                     parsed = json.loads(content) if content else None
                 except json.JSONDecodeError:
                     parsed = None
-                return {"ok": 200 <= response.status < 300, "status": response.status, "text": content, "json": parsed}
+                return {"ok": 200 <= response.status < 300, "status": response.status, "text": content, "json": parsed,
+                        "retryAfter": response.headers.get("Retry-After") if response.status == 429 else None}
         except (aiohttp.ClientError, TimeoutError) as exc:
             return {"ok": False, "error": str(exc)}
 

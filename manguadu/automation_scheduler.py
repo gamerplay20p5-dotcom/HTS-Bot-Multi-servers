@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .tenant_scope import getenv
+
 import asyncio
 import json
 import logging
@@ -47,7 +49,7 @@ def _strip_accents(value: object) -> str:
 
 
 def get_timezone() -> str:
-    return clean_text(os.getenv("AUTOMATION_TIMEZONE")) or clean_text(os.getenv("TZ")) or DEFAULT_TIMEZONE
+    return clean_text(getenv("AUTOMATION_TIMEZONE")) or clean_text(getenv("TZ")) or DEFAULT_TIMEZONE
 
 
 def _zone() -> ZoneInfo | timezone:
@@ -60,7 +62,7 @@ def _zone() -> ZoneInfo | timezone:
 
 def _grace_minutes() -> int:
     try:
-        value = int(os.getenv("AUTOMATION_GRACE_MINUTES", ""))
+        value = int(getenv("AUTOMATION_GRACE_MINUTES", ""))
         return value if value >= 1 else DEFAULT_GRACE_MINUTES
     except ValueError:
         return DEFAULT_GRACE_MINUTES
@@ -215,14 +217,14 @@ class AutomationScheduler:
         local = datetime.now(_zone())
         name = f"{BACKUP_PREFIX}{local:%Y-%m-%d %H:%M}"
         async with PterodactylClient(server) as client:
-            created = await client.create_backup(name, os.getenv("PTERO_BACKUP_IGNORED", ""))
+            created = await client.create_backup(name, getenv("PTERO_BACKUP_IGNORED", ""))
         pruned_before = {"ok": True, "deleted": [], "failed": []}
         if not created.get("ok"):
             error = extract_ptero_error(created)
             if re.search(r"limit|maximum|maximo|too many|atingiu|chegou|quota", _strip_accents(error).lower()):
                 pruned_before = await self._prune_backups(server, max(0, keep - 1))
                 async with PterodactylClient(server) as client:
-                    created = await client.create_backup(name, os.getenv("PTERO_BACKUP_IGNORED", ""))
+                    created = await client.create_backup(name, getenv("PTERO_BACKUP_IGNORED", ""))
             if not created.get("ok"):
                 return {"ok": False, "message": f"Falha ao criar backup: {error}"}
         pruned_after = await self._prune_backups(server, keep)

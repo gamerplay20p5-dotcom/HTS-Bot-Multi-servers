@@ -7,6 +7,7 @@ import secrets
 import string
 import struct
 from dataclasses import dataclass
+from .tenant_scope import current_scope
 
 
 MAX_PACKET_SIZE = 4 * 1024 * 1024
@@ -82,6 +83,15 @@ async def _read_command_output(
 
 
 async def send_rcon_command(host: str, port: int, password: str, command: str, timeout: float = 10) -> RconResult:
+    scope = current_scope()
+    bot = getattr(getattr(scope, "runtime", None), "bot", None)
+    if bot is not None:
+        async with bot._rcon_limiter:
+            return await _send_rcon_command(host, port, password, command, timeout)
+    return await _send_rcon_command(host, port, password, command, timeout)
+
+
+async def _send_rcon_command(host: str, port: int, password: str, command: str, timeout: float = 10) -> RconResult:
     host = str(host or "").strip()
     try:
         port = int(port)

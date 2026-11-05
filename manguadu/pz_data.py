@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from .tenant_scope import getenv, allowed_path
+
 import re
 import json
 import math
 import os
 import time
+import csv
+import sys
+import logging
+from collections import OrderedDict, Counter, deque
+from threading import RLock
 from pathlib import Path
 
 from .friendhost import (
@@ -31,6 +38,8 @@ PERK_LABELS = {
     "smallblade": "Lâmina curta", "longblade": "Lâmina longa",
     "smallblunt": "Contundente curta", "tailoring": "Costura",
 }
+
+logger = logging.getLogger(__name__)
 PERK_EMOJIS = {
     "cooking": "🍳", "fitness": "💪", "strength": "🏋️", "blunt": "🔨", "axe": "🪓",
     "lightfoot": "🦶", "nimble": "🤸", "sprinting": "🏃", "sneak": "🥷", "woodwork": "🪚",
@@ -42,8 +51,108 @@ PERK_EMOJIS = {
 
 
 class PzData:
-    def __init__(self, csv_base_path: str | Path | None):
+    def __init__(self, csv_base_path: str | Path | None, *, death_state_path: Path | None = None):
         self.base_path = Path(csv_base_path) if csv_base_path else None
+        self._row_cache = OrderedDict()
+        self._cache_bytes = 0
+        self._cache_lock = RLock()
+        self._death_offset = 0
+        self._death_inode = None
+        self._death_counts = Counter()
+        self._death_total = 0
+        self._death_remainder = b""
+        self._death_caught_up = False
+        self._death_events = deque(maxlen=100)
+        self._death_state_path = death_state_path
+        if death_state_path and death_state_path.is_file() and death_state_path.stat().st_size < 8 * 1024 * 1024:
+            try:
+                state = json.loads(death_state_path.read_text(encoding="utf-8"))
+                self._death_inode = tuple(state["identity"])
+                self._death_offset = int(state["offset"])
+                self._death_counts = Counter({str(k): int(v) for k, v in list(state["counts"].items())[:50000]})
+                self._death_total = int(state["total"])
+                self._death_caught_up = True
+            except (OSError, ValueError, KeyError, TypeError):
+                self._death_inode, self._death_offset = None, 0
+
+    def latest_row(self, file_path):
+        if not file_path:
+            return None
+        path = Path(file_path)
+        try:
+            if self.base_path and not path.resolve().is_relative_to(self.base_path.resolve()):
+                return None
+            stat = path.stat()
+        except OSError:
+            return None
+        key, version = str(path), (stat.st_mtime_ns, stat.st_size)
+        with self._cache_lock:
+            entry = self._row_cache.get(key)
+            if entry and entry[0] == version:
+                self._row_cache.move_to_end(key)
+                return dict(entry[1]) if entry[1] else None
+            row = read_latest_csv_row(path)
+            if row is None and entry and entry[1]:
+                return dict(entry[1])
+            cost = sys.getsizeof(row) + sys.getsizeof(key) + sum(sys.getsizeof(k) + sys.getsizeof(v) for k, v in (row or {}).items()) + 256
+            if entry:
+                self._cache_bytes -= entry[2]
+            self._row_cache[key] = (version, row, cost)
+            self._cache_bytes += cost
+            while self._row_cache and (len(self._row_cache) > 2048 or self._cache_bytes > 4 * 1024 * 1024):
+                _, old = self._row_cache.popitem(last=False)
+                self._cache_bytes -= old[2]
+            return dict(row) if row else None
+
+    def death_snapshot(self, *, consume_events=True):
+        path = resolve_server_file(self.server_path, "deaths")
+        if not path or not allowed_path(path):
+            return {"counts": {}, "total": 0, "events": []}
+        with self._cache_lock:
+            try:
+                stat = path.stat()
+                identity = (str(path), stat.st_ino)
+                if identity != self._death_inode or stat.st_size < self._death_offset:
+                    self._death_inode, self._death_offset = identity, 0
+                    self._death_counts.clear()
+                    self._death_events.clear()
+                    self._death_total, self._death_remainder, self._death_caught_up = 0, b"", False
+                with path.open("rb") as stream:
+                    stream.seek(self._death_offset)
+                    raw = stream.read(4 * 1024 * 1024)
+                    self._death_offset = stream.tell()
+            except OSError:
+                return {"counts": dict(self._death_counts), "total": self._death_total, "events": []}
+            complete, _, self._death_remainder = (self._death_remainder + raw).rpartition(b"\n")
+            if not complete and b"\n" not in raw:
+                self._death_remainder = (self._death_remainder or raw)[-65536:]
+            events = []
+            for row in csv.reader(complete.decode("utf-8-sig", errors="replace").splitlines(), delimiter=";"):
+                if not row or any(cell.casefold() == "username" for cell in row):
+                    continue
+                nick = next((cell.strip() for cell in row[4:7] if cell.strip() and not re.fullmatch(r"\d{2}\.\d{2}\.\d{4}|\d{2}:\d{2}:\d{2}", cell.strip())), "")
+                if nick and (nick in self._death_counts or len(self._death_counts) < 50000):
+                    self._death_counts[nick] += 1
+                self._death_total += 1
+                if self._death_caught_up:
+                    self._death_events.append(row)
+            self._death_caught_up = self._death_offset >= stat.st_size
+            if raw and self._death_state_path:
+                state = {"identity": self._death_inode, "offset": self._death_offset - len(self._death_remainder), "counts": self._death_counts, "total": self._death_total}
+                try:
+                    self._death_state_path.parent.mkdir(parents=True, exist_ok=True)
+                    temporary = self._death_state_path.with_suffix(".tmp")
+                    temporary.write_text(json.dumps(state), encoding="utf-8")
+                    temporary.replace(self._death_state_path)
+                except OSError:
+                    logger.warning("Nao foi possivel persistir o cursor de mortes em %s", self._death_state_path)
+            events = list(self._death_events) if consume_events else []
+            if consume_events:
+                self._death_events.clear()
+            return {"counts": dict(self._death_counts), "total": self._death_total, "events": events}
+
+    def death_counts(self):
+        return self.death_snapshot(consume_events=False)["counts"]
 
     @property
     def players_path(self) -> Path | None:
@@ -54,14 +163,14 @@ class PzData:
         return self.base_path / "Servidor" if self.base_path else None
 
     def player_names(self) -> list[str]:
-        if not self.players_path or not self.players_path.is_dir():
+        if not self.players_path or not allowed_path(self.players_path) or not self.players_path.is_dir():
             return []
-        return sorted((path.name for path in self.players_path.iterdir() if path.is_dir()), key=str.casefold)
+        return sorted((path.name for path in self.players_path.iterdir() if path.is_dir() and not path.is_symlink()), key=str.casefold)
 
     def player_rows(self) -> list[dict]:
         rows = []
         for nick in self.player_names():
-            row = read_latest_csv_row(resolve_player_file(self.players_path, nick))
+            row = self.latest_row(resolve_player_file(self.players_path, nick))
             if row:
                 rows.append({"nick": nick, "row": row})
         return rows
@@ -106,7 +215,7 @@ class PzData:
         if not entry or not self.players_path:
             return None
         perks_file = resolve_player_file(self.players_path, entry["nick"], "perks")
-        perks = read_latest_csv_row(perks_file) or {}
+        perks = self.latest_row(perks_file) or {}
         ignored = {"systemdate", "systemtime", "gametime", "steamid", "username", "charname"}
         skills = [
             {"key": key, "label": PERK_LABELS.get(key, key), "emoji": PERK_EMOJIS.get(key, "✨"), "value": to_number(value)}
@@ -137,7 +246,7 @@ class PzData:
         player_files = [candidate for nick in self.player_names() if (candidate := resolve_player_file(self.players_path, nick)) and candidate.is_file()]
         if player_files:
             newest = max(player_files, key=lambda candidate: candidate.stat().st_mtime)
-            player_row = read_latest_csv_row(newest)
+            player_row = self.latest_row(newest)
             fallback_time = get_field(player_row, ["gametime"])
             fallback_source = newest.name
         values = [value.strip().strip('"') for value in lines[-1].split(";")] if lines else []
@@ -161,8 +270,8 @@ class PzData:
         target = clean_text(nick).casefold()
         kind = clean_text(log_type).casefold()
         period = max(1, min(168, int(hours or 24)))
-        root = Path(os.getenv("LOGS_PATH", ""))
-        if not target or not os.getenv("LOGS_PATH") or not root.is_dir():
+        root = Path(getenv("LOGS_PATH", ""))
+        if not target or not getenv("LOGS_PATH") or not root.is_dir():
             return {"files": [], "lines": [], "hours": period, "type": kind}
         cutoff = time.time() - period * 3600
         candidates = []
@@ -192,7 +301,13 @@ class PzData:
                     break
         lines = []
         for path in candidates:
-            content = read_text_file(path)
+            if not allowed_path(path):
+                continue
+            with path.open("rb") as stream:
+                stream.seek(max(0, path.stat().st_size - 2 * 1024 * 1024))
+                if stream.tell():
+                    stream.readline(65536)
+                content = stream.read(2 * 1024 * 1024).decode("utf-8", errors="replace")
             for line in content.splitlines():
                 if target not in line.casefold():
                     continue

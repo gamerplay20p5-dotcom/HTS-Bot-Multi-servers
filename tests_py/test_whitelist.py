@@ -235,6 +235,7 @@ def test_seed_legacy_guild_settings_imports_valid_channel_ids(monkeypatch: pytes
 
     store = ConfigStore(":memory:")
     bot = ManguaduBot(store)
+    monkeypatch.setenv("GUILD_ID", "11")
     monkeypatch.setenv("ID_CANAL_ADMIN", "123456")
     monkeypatch.setenv("ID_CANAL_EVOLUCAO", " 234567 ")
     monkeypatch.setenv("ID_CANAL_STATS", "invalid")
@@ -247,6 +248,8 @@ def test_seed_legacy_guild_settings_imports_valid_channel_ids(monkeypatch: pytes
     assert channels["evolution"] == 234567
     assert channels["stats"] is None
     assert channels["ranking"] is None
+    bot._seed_legacy_guild_settings(22)
+    assert store.get_settings(22)["channels"]["admin"] is None
     store.close()
 
 
@@ -260,7 +263,7 @@ def test_discord_views_fit_rows_and_public_buttons_persist() -> None:
     bot = ManguaduBot(store)
     commands = bot.tree.get_commands()
     assert {command.name for command in commands} == {
-        "config_bot", "config_api", "config_lore", "config_kick_automatico", "wl", "bot", "online", "info", "skills", "traits", "rank",
+        "config", "condig", "config_bot", "config_api", "config_lore", "config_kick_automatico", "wl", "bot", "online", "info", "skills", "traits", "rank",
         "localizar_veiculo", "mapas", "gps", "satelite", "wipe_zeds", "wipe", "wipe_force",
         "wipe_teste", "wipe_chunk", "wipe_chunk_force", "wipe_chunk_teste",
         "rcon", "servidor", "status", "statuscomplete", "logs", "safehouse",

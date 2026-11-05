@@ -73,6 +73,15 @@ class ConfigStore:
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.execute("PRAGMA busy_timeout = 5000")
         self._db.executescript("""
+            CREATE TABLE IF NOT EXISTS server_bindings (
+                guild_id INTEGER PRIMARY KEY,
+                server_uuid TEXT NOT NULL UNIQUE,
+                payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS pending_bindings (
+                guild_id INTEGER PRIMARY KEY,
+                payload TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS guild_settings (
                 guild_id INTEGER PRIMARY KEY,
                 payload TEXT NOT NULL
@@ -126,6 +135,31 @@ class ConfigStore:
             self._db.execute("ALTER TABLE wl_requests ADD COLUMN triage_json TEXT NOT NULL DEFAULT ''")
         self._migrate_legacy_lore()
         self._db.commit()
+
+    def get_binding(self, guild_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._db.execute("SELECT payload FROM server_bindings WHERE guild_id = ?", (guild_id,)).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def list_bindings(self) -> list[tuple[int, dict[str, Any]]]:
+        with self._lock:
+            return [(int(row[0]), json.loads(row[1])) for row in self._db.execute("SELECT guild_id, payload FROM server_bindings ORDER BY guild_id")]
+
+    def save_binding(self, guild_id: int, binding: dict[str, Any]) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO server_bindings(guild_id, server_uuid, payload) VALUES (?, ?, ?) "
+                "ON CONFLICT(guild_id) DO UPDATE SET server_uuid=excluded.server_uuid, payload=excluded.payload",
+                (guild_id, binding["uuid"], json.dumps(binding, ensure_ascii=False)),
+            )
+            self._db.execute("DELETE FROM pending_bindings WHERE guild_id = ?", (guild_id,))
+
+    def pending_binding(self, guild_id: int, value: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        with self._lock, self._db:
+            if value is not None:
+                self._db.execute("INSERT OR REPLACE INTO pending_bindings VALUES (?, ?)", (guild_id, json.dumps(value)))
+            row = self._db.execute("SELECT payload FROM pending_bindings WHERE guild_id = ?", (guild_id,)).fetchone()
+            return json.loads(row[0]) if row else None
 
     def _load_secret_cipher(self) -> Fernet:
         if str(self.path) == ":memory:":

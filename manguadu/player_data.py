@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .tenant_scope import getenv, current_scope
+
 import json
 import logging
 import os
@@ -109,6 +111,12 @@ def _find_safehouses(nick: str, player_row: dict, safehouse_rows: list[dict]) ->
 
 
 def _discovery_roots(data_path: Path | None, logs_path: str | Path | None = None) -> list[Path]:
+    if current_scope() is not None:
+        cache_value = getenv("PZ_CACHE_ROOT")
+        if not cache_value:
+            return []
+        cache = Path(cache_value).resolve()
+        return [root for root in (cache / "db", cache / "DB", cache / "Saves" / "Multiplayer") if root.is_dir() and root.resolve().is_relative_to(cache)]
     roots: set[Path] = set()
     for seed in (data_path, Path(logs_path) if logs_path else None):
         if not seed: continue
@@ -194,7 +202,7 @@ def discover_player_db_data(nick: str, steam_id: str = "", data_path: str | Path
 
 
 def collect_player_snapshot(nick_input: str, *, data: PzData | None = None, include_inventory: bool = False, include_db: bool = False) -> dict:
-    csv_path = clean_text(os.getenv("CSV_BASE_PATH"))
+    csv_path = clean_text(getenv("CSV_BASE_PATH"))
     data = data or PzData(Path(csv_path) if csv_path else None)
     available = data.player_names()
     requested = clean_text(nick_input)
@@ -217,7 +225,7 @@ def collect_player_snapshot(nick_input: str, *, data: PzData | None = None, incl
     faction = _find_faction(actual, player_row, faction_rows)
     safehouses = _find_safehouses(actual, player_row, safehouse_rows)
     steam_id = get_field(player_row, ["steamid"])
-    db_data = discover_player_db_data(actual, steam_id, data.base_path, os.getenv("LOGS_PATH")) if include_db else {"roots": [], "sqliteMatches": [], "textMatches": []}
+    db_data = discover_player_db_data(actual, steam_id, data.base_path, getenv("LOGS_PATH")) if include_db else {"roots": [], "sqliteMatches": [], "textMatches": []}
     return {
         "found": True, "requestedNick": requested, "actualNick": actual,
         "files": {"playerFile": str(player_file), "perksFile": str(perks_file), "inventoryFile": str(inventory_file)},

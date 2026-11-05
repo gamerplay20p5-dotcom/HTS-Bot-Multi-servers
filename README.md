@@ -1,33 +1,39 @@
-# Friendhost - PZ/Bot
+# HTS Bot Multi servers
+
+**Criado por / Created by Malaio/Erick** · Python 3.11+ · Project Zomboid · Discord · Pterodactyl/Wings
+
+[Português: guia abaixo](#o-que-o-bot-faz) · [English: full operations guide](docs/OPERATIONS.en.md) · [Comandos](PZ_COMMANDS.md) · [Deploy](DEPLOY.md)
+
+Uma instância Python atende vários Discords com um servidor PZ por guild, dados isolados e uma chave Pterodactyl compartilhada. / One Python instance serves multiple Discord communities with one PZ server per guild, isolated data and a shared Pterodactyl API key.
 
 Bot Discord em Python para administrar comunidades de **Project Zomboid**, com integrações para o mod FriendHost, RCON e Pterodactyl. O projeto reúne ferramentas para jogadores, atendimento de whitelist, operação do servidor e automações em uma interface de slash commands e mensagens interativas do Discord.
 
-O pacote Python ainda se chama `manguadu` para preservar o comando de inicialização e a estrutura interna do projeto. O nome público do projeto é **Friendhost - PZ/Bot**.
+O pacote Python ainda se chama `manguadu` para preservar o comando de inicialização e a estrutura interna do projeto. O nome público do projeto é **HTS Bot Multi servers**.
 
 ## O que o bot faz
 
-- **Configuração no Discord:** `/config_bot` abre uma interface administrativa por servidor Discord para canais, equipe, categoria de tickets e regras da WL. `/config_api` recebe e testa a chave Gemini por um painel privado. As credenciais de Pterodactyl e RCON continuam na VM.
+- **Configuração no Discord:** `/config_bot` abre uma interface administrativa por servidor Discord para canais, equipe, categoria de tickets e regras da WL. `/config_api` recebe e testa a chave Gemini por um painel privado. A chave Pterodactyl fica no dedicado; a senha RCON vem do INI do volume vinculado.
 - **Tickets e whitelist:** cria canais privados, coleta personagem, senha opcional e lore, permite revisão manual ou triagem automática e executa `adduser` via RCON. Senhas ausentes são geradas pelo bot. Aprovações e reprovações, com motivos, são publicadas no canal de decisões configurado; o resultado não é enviado ao chat do jogo. Credenciais são entregues por DM ou no ticket privado.
 - **Controle RP por voz:** `/config_kick_automatico` exige uma call Discord configurada para jogadores online. A cada 10 segundos, compara `/players` do PZ com os vínculos de contas; quem ficar fora da call por 60 segundos recebe kick com motivo e registro no canal administrativo.
 - **Validação de lore:** com Gemini configurado, avalia coerência narrativa, cronologia e contradições, produzindo resumo e evidências para a equipe. Sem chave, usa a triagem lexical local. Textos longos podem ser importados em `.txt` até 9.999.999 caracteres; ficam comprimidos no SQLite e apenas trechos limitados são enviados ao modelo.
 - **Administração PZ:** consulta jogadores, ficha, skills, traits, safehouses, arquivos e logs; oferece operações administrativas, RCON, controle do servidor, backups e ferramentas de wipe com verificações de segurança.
 - **FriendHost e anticheat:** lê arquivos de dados do mod, produz status e rankings, acompanha evoluções e mortes, espelha eventos de chat/login/logout e encaminha alertas do PZAntiCheat.
 - **Painéis e rotinas:** monta painéis de status e ranking, relaciona nomes PZ a membros Discord, personaliza imagens/temas e agenda tarefas de servidor.
-- **Operação e atualização:** descobre caminhos PZ quando possível e atualiza o checkout Python pelo comando `/bot atualizar` ou pelo agendador opcional.
+- **Operação e atualização:** resolve os caminhos dentro do volume Wings validado e atualiza o checkout Python pelo comando `/bot atualizar` ou pelo agendador opcional. O grupo `/bot` é restrito ao proprietário do aplicativo Discord porque afeta a instância compartilhada.
 
 ## Requisitos
 
 - Python 3.11 ou superior.
 - Uma aplicação de bot criada no [Discord Developer Portal](https://discord.com/developers/applications), com `DISCORD_TOKEN`.
-- Pterodactyl e RCON para os recursos correspondentes; ambos são configurados no `.env` da VM.
+- Pterodactyl para validação/controle e volumes Wings acessíveis localmente. A URL e a chave compartilhada ficam no `.env`; os endpoints RCON são configurados por Discord, com senha lida do INI do servidor.
 - PM2 é opcional e serve somente para manter o processo Python ativo e reiniciá-lo.
 - `ffmpeg` é opcional e serve para gerar thumbnails de vídeos usados nos painéis.
 
 ## Instalação local
 
 ```bash
-git clone --branch migration/python-runtime https://github.com/gamerplay20p5-dotcom/Manguadu.git Friendhost-PZ-Bot
-cd Friendhost-PZ-Bot
+git clone --branch feature/hts-multi-servers https://github.com/gamerplay20p5-dotcom/HTS-Bot-Multi-servers.git
+cd HTS-Bot-Multi-servers
 python -m venv .venv
 # Linux/macOS:
 . .venv/bin/activate
@@ -49,10 +55,10 @@ python -m manguadu --bot       # inicia o bot Discord
 ## Primeira configuração no Discord
 
 1. Convide o bot com permissões para ver canais, enviar mensagens, anexar arquivos no canal de auditoria, gerenciar canais e usar comandos de aplicação. Habilite os intents necessários no Developer Portal se a configuração do aplicativo exigir.
-2. Execute `/config_bot` como administrador e escolha canais, categoria de tickets, cargo da equipe e opções da WL.
-3. Em **Config WL**, escolha o servidor, defina se a lore é obrigatória e selecione revisão manual ou automática. Para lore acima de 4.000 caracteres, use `/config_lore` com um arquivo `.txt` UTF-8 em um canal privado da equipe.
+2. Execute `/config` como administrador, cadastre o ID/UUID e valide o código no arquivo do servidor. Depois escolha canais, categoria de tickets, cargo da equipe e opções da WL em `/config_bot`.
+3. Em **Config WL**, defina se a lore é obrigatória e selecione revisão manual ou automática. O servidor PZ vem do vínculo de `/config`. Para lore acima de 4.000 caracteres, use `/config_lore` com um arquivo `.txt` UTF-8 em um canal privado da equipe.
 4. Use `/config_api`, abra o Google AI Studio pelo botão do painel, crie uma chave, cole-a no modal privado e teste a conexão. A camada gratuita pode usar prompts para melhorar produtos Google; o painel informa isso antes da configuração.
-5. Configure no `.env` da VM `PTERO_URL`, `PTERO_SERVER_ID`, `PTERO_API_KEY` e os dados de RCON. Esses segredos de infraestrutura não são gravados pela UI do Discord.
+5. Configure no `.env` do dedicado a URL e a chave Pterodactyl compartilhada. ID/UUID e pasta Lua são cadastrados por Discord; o endpoint RCON fica em `/config` e a senha é lida do INI do PZ. O `.env` de servidor único só é importado para a guild legada indicada em `GUILD_ID`.
 6. Vincule nomes PZ aos membros Discord com `/painel jogadores vincular`, abra `/config_kick_automatico`, escolha a call e ative a fiscalização. O bot exige RCON válido e vínculos para os jogadores que já estiverem online antes de ativar.
 7. Consulte [PZ_COMMANDS.md](PZ_COMMANDS.md) para os comandos e fluxos do servidor e [DEPLOY.md](DEPLOY.md) para o processo de produção.
 
@@ -68,13 +74,45 @@ python -m manguadu --bot       # inicia o bot Discord
 
 Credenciais do Discord, Pterodactyl, RCON e uma eventual chave privada do GitHub vivem apenas no `.env` da VM. A chave Gemini é cadastrada pela UI e cifrada localmente. `BOT_GITHUB_TOKEN` pode ficar vazio para repositório público. Para instalação, veja [`.env.example`](.env.example); os arquivos de servidor e mapa têm exemplos em `config/`.
 
-Para instalar em vários servidores PZ, copie `config/servers.example.json` para `config/servers.json` e preencha os identificadores e nomes das variáveis de ambiente. Não coloque os valores dos segredos diretamente nesse JSON.
+## Vários servidores no mesmo dedicado
+
+Uma instância do bot atende vários Discords, com um servidor PZ vinculado a cada Discord. Configure no `.env` apenas as credenciais globais do Discord, `PTERO_URL`, a chave compartilhada `PTERO_API_KEY` e, se necessário, `PTERO_VOLUMES_ROOT` (padrão `/var/lib/pterodactyl/volumes`). A conta da chave precisa ter acesso aos servidores que serão cadastrados. `GUILD_ID` passa a ser opcional e serve para migração da instalação antiga e sincronização imediata naquele Discord.
+
+1. Adicione o bot ao Discord do cliente e abra `/config` (o alias `/condig` também funciona).
+2. Em **Cadastrar / editar servidor**, informe o ID do Pterodactyl, o UUID completo do volume, o nome e a pasta Lua relativa ao volume, normalmente `.cache/Lua`.
+3. Crie `friendhost-discord-link.txt` na raiz desse servidor pelo painel Pterodactyl, cole o código mostrado na resposta privada e clique em **Validar vínculo**. A confirmação expira em 15 minutos e evita associar um servidor ao Discord errado.
+4. Configure os canais pelo botão **Canais, tickets e WL** ou `/config_bot`. Status, ranking, logs, automações, temas e vínculos de jogadores ficam isolados por Discord.
+5. Para RCON, o bot lê `RCONPassword` no único INI em `Server/` desse volume. Use **RCON publicado** para informar host/porta publicados ou escolher o INI quando houver vários. A senha não é copiada para o Discord.
+
+O UUID só pode pertencer a um Discord. Uma troca para outro volume requer migração pelo operador para preservar corretamente tickets, WL e automações. Servidores em outras máquinas Wings precisam ter seus volumes montados na raiz local configurada: esta versão usa a API para validar/administrar e leitura local para o fluxo intenso de dados. Não faz cópia completa periódica dos arquivos pela API. `config/servers.json` permanece para ferramentas legadas/CLI; as guilds vinculadas não o usam para escolher outro cliente.
+
+Rankings e status são atualizados aproximadamente a cada **10 minutos**, com fases diferentes por Discord. Uma fila de três trabalhadores impede varreduras simultâneas ilimitadas e não acumula repetições do mesmo trabalho. Logs são lidos a cada 5 segundos, em lotes de até 1 MiB/2.000 linhas; o espelho agrupa mensagens e resume excessos para respeitar os limites do Discord. O painel `/config` mostra bytes de logs ainda pendentes. Não há replay do histórico de chat na inicialização.
+
+Leituras de jogadores usam cabeçalho e últimas 256 KiB do CSV, cache por tamanho/data de alteração (até 4 MiB/2.048 entradas por guild) e quatro threads de arquivos. Mortes são agregadas incrementalmente em lotes de 4 MiB, com cursor persistido. Respostas da API e leituras diretas auxiliares têm limite de 8 MiB; arquivos maiores exigem leitura incremental ou manutenção. Rascunhos de lore ficam comprimidos em disco e as operações de lore longa têm duas vagas compartilhadas.
+
+Preserve `data/bot-config.sqlite3`, sua chave `.key` e `data/guilds/` nos backups. IDs, caminhos e credenciais de um servidor não viram fallback de outro. Instalações antigas só importam o `.env` para a guild indicada explicitamente em `GUILD_ID`.
+
+O orçamento de aproximadamente 2,56 GB (1% de 256 GB) deve ser confirmado no dedicado com carga real; não há promessa de RSS fixa. Para uma medição local reproduzível, execute `python -m scripts.benchmark_multiserver --servers 25 --players 200 --history 200`. Esse teste mede leituras/renderização sintéticas e alocações Python, sem tráfego real de Discord/Pterodactyl. Veja em [DEPLOY.md](DEPLOY.md) como impor um teto de memória no Linux.
 
 ## Atualização automática
 
 O atualizador Python executa `git fetch`, `git pull --ff-only`, instala o projeto e compila os módulos antes de reiniciar o processo configurado em `PM2_APP_NAME`. Ele cancela a operação se encontrar alterações rastreadas locais. Para habilitar as verificações periódicas, configure `BOT_AUTO_UPDATE_ENABLED=1`; para uma atualização manual, use `/bot atualizar`.
 
-Durante os testes desta branch, mantenha `BOT_UPDATE_BRANCH=migration/python-runtime`. Depois que a branch for integrada, altere para `main`. Um token GitHub só é necessário se o repositório for privado.
+Durante os testes desta branch, mantenha `BOT_UPDATE_BRANCH=feature/hts-multi-servers`. Depois que a branch for integrada, altere para `main`. Um token GitHub só é necessário se o repositório for privado.
+
+## Validação e resultados medidos
+
+O teste sintético local usou **25 servidores × 200 jogadores × 200 linhas históricas** (5.000 jogadores). A primeira varredura/renderização levou **31,202 segundos**; a repetição com cache, **4,986 segundos**. O pico de alocações Python medido durante esse teste foi **6,06 MiB**. [Relatório reproduzível](artifacts/multiserver-benchmark.json).
+
+O teste foi executado no Windows de desenvolvimento e exclui RSS total do processo, tráfego real do Discord/Pterodactyl e carga do dedicado. Ele verifica leituras/cache/renderização locais; não garante que a produção ficará abaixo de 2,56 GB. O espelho resume mensagens em excesso, os trabalhos podem atrasar sob sobrecarga e arquivos auxiliares acima de 8 MiB exigem leitura incremental ou manutenção. Os logs completos continuam no servidor PZ.
+
+O conjunto de **60 testes automatizados** cobre também isolamento entre 25 guilds, ausência de fallback para outro cliente, validação ID/UUID/código, concorrência limitada, fila de logs independente, UTF-8 entre lotes, cursores de mortes persistidos e exportação de lore. Execute `python -m pytest -q` para conferir a versão local.
+
+## Identidade e autoria
+
+**Criador: Malaio/Erick.** O nome público é **HTS Bot Multi servers**, e a distribuição Python é `hts-bot-multi-servers`. O módulo continua `manguadu` para manter o comando de inicialização. O mod FriendHost mantém seu nome próprio. O proprietário deve alterar o nome visível do aplicativo no Discord Developer Portal caso ainda mostre a identidade antiga.
+
+Instalações PM2 existentes podem conservar o nome do processo; configure `PM2_APP_NAME` com o nome real. Para instalações novas, use `hts-bot-multi-servers`. Ao trocar a distribuição Python instalada, remova o pacote antigo antes de instalar este com `pip install -e .`, preservando `.env` e `data/`.
 
 ## Estrutura
 

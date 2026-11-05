@@ -73,7 +73,9 @@ def _faction_leaderboard(player_rows: list[dict], faction_rows: list[dict]) -> l
     return sorted(factions.values(), key=lambda item: (-item["kills"], -item["hours"], -len(item["members"])))
 
 
-def _death_leaderboard(player_rows: list[dict], death_rows: list[list[str]]) -> list[tuple[str, int]]:
+def _death_leaderboard(player_rows: list[dict], death_rows: list[list[str]] | dict[str, int]) -> list[tuple[str, int]]:
+    if isinstance(death_rows, dict):
+        return sorted(death_rows.items(), key=lambda item: (-item[1], item[0].casefold()))
     names = [get_field(item.get("row", item), ["username"]) for item in player_rows]
     counts = {name: 0 for name in names if name}
     for row in death_rows:
@@ -88,7 +90,7 @@ def _ranking_description(rows: list, format_value, limit: int = 5) -> str:
     return _limited_lines([f"{_medal(index)} **{item['name']}**\n> {format_value(item)}" for index, item in enumerate(rows[:limit])])
 
 
-def build_ranking_panel(player_rows: list[dict], faction_rows: list[dict], death_rows: list[list[str]] | None = None, *, theme: dict | None = None) -> tuple[list[discord.Embed], list[discord.File]]:
+def build_ranking_panel(player_rows: list[dict], faction_rows: list[dict], death_rows: list[list[str]] | dict[str, int] | None = None, *, theme: dict | None = None) -> tuple[list[discord.Embed], list[discord.File]]:
     theme = theme or get_saved_theme()
     primary = color_to_number(theme["primaryColor"])
     secondary = color_to_number(theme["secondaryColor"], 0xF0A93B)
@@ -126,7 +128,7 @@ def build_ranking_panel(player_rows: list[dict], faction_rows: list[dict], death
         leader = factions[0]
         label = leader["name"] + (f" [{leader['tag']}]" if leader["tag"] else "")
         embeds.append(discord.Embed(title="👑 FACÇÃO EM DESTAQUE", description=f"**{label}** lidera com **{int(leader['kills']):,} abates**, **{leader['hours']:.1f} horas** e **{len(leader['members'])} membros**.".replace(",", "."), color=primary))
-    embeds[-1].set_footer(text="Ranking atualizado silenciosamente a cada 60 segundos")
+    embeds[-1].set_footer(text="Ranking atualizado silenciosamente a cada 10 minutos")
     embeds[-1].timestamp = datetime.now(timezone.utc)
     return embeds, get_theme_attachments(theme, "ranking")
 
@@ -164,7 +166,7 @@ def build_server_panel(overview: dict, *, online_profiles: list[dict] | None = N
     if connect_address: main.add_field(name="CONECTAR", value=f"`{connect_address}`", inline=False)
     if image := get_media_url(theme.get("banner")): main.set_image(url=image)
     if image := get_media_url(theme.get("thumbnail")): main.set_thumbnail(url=image)
-    main.set_footer(text="Monitoramento ao vivo · atualização silenciosa a cada 60s")
+    main.set_footer(text="Monitoramento ao vivo · atualização silenciosa a cada 10 min")
     main.timestamp = datetime.now(timezone.utc)
     profiles = online_profiles or []
     embeds = [main]

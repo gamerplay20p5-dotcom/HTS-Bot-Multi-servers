@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .tenant_scope import getenv
+
 import asyncio
 import os
 import re
@@ -26,11 +28,11 @@ def parse_pair(value: str) -> tuple[int, int] | None:
 
 
 def _save_root() -> str:
-    return re.sub(r"[/\\]chunkdata[/\\]?$", "", clean_text(os.getenv("PZ_SAVE_ROOT")), flags=re.I)
+    return re.sub(r"[/\\]chunkdata[/\\]?$", "", clean_text(getenv("PZ_SAVE_ROOT")), flags=re.I)
 
 
 def _cache_root(save_root: str) -> str:
-    configured = clean_text(os.getenv("PZ_CACHE_ROOT"))
+    configured = clean_text(getenv("PZ_CACHE_ROOT"))
     if configured:
         return configured
     normalized = save_root.replace("\\", "/")
@@ -143,7 +145,7 @@ async def _save_files(root: str) -> tuple[str, dict[str, dict[str, Any]]] | tupl
 
 
 async def build_wipe_plan(kind: str, target: str = "", *, force: bool = False, data: PzData | None = None) -> dict[str, Any]:
-    data = data or PzData(os.getenv("CSV_BASE_PATH"))
+    data = data or PzData(getenv("CSV_BASE_PATH"))
     if kind == "global":
         save_root = _save_root()
         root = _cache_root(save_root)
@@ -268,7 +270,7 @@ def _safe_relative(name: str) -> PurePosixPath | None:
 
 
 async def _wait_for_backup(client: PterodactylClient, backup_uuid: str) -> dict[str, Any]:
-    wait_ms = max(60_000, int(to_number(os.getenv("PZ_WIPE_BACKUP_WAIT_MS"), 600_000)))
+    wait_ms = max(60_000, int(to_number(getenv("PZ_WIPE_BACKUP_WAIT_MS"), 600_000)))
     deadline = time.monotonic() + wait_ms / 1000
     while time.monotonic() < deadline:
         result = await client.get_backup(backup_uuid)
@@ -283,7 +285,7 @@ async def _wait_for_backup(client: PterodactylClient, backup_uuid: str) -> dict[
 
 def _local_backup(plan: dict[str, Any]) -> dict[str, Any]:
     root = Path(plan["root"]).resolve()
-    backup_dir = Path(os.getenv("PZ_LOCAL_BACKUP_DIR") or PROJECT_ROOT / "data" / "local-wipe-backups").resolve()
+    backup_dir = Path(getenv("PZ_LOCAL_BACKUP_DIR") or PROJECT_ROOT / "data" / "local-wipe-backups").resolve()
     backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(backup_dir, 0o700)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

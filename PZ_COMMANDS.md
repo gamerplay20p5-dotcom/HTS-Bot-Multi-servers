@@ -1,6 +1,6 @@
-# Friendhost - PZ/Bot: comandos Project Zomboid
+# HTS Bot Multi servers: comandos Project Zomboid
 
-Este é o guia operacional do bot Python para administradores da comunidade. A identidade do produto foi atualizada para Friendhost - PZ/Bot; `manguadu` continua como o nome do pacote e módulo Python para inicialização.
+Este é o guia operacional do bot Python para administradores da comunidade. Criado por Malaio/Erick, com identidade p?blica HTS Bot Multi servers; `manguadu` continua como o nome do pacote e módulo Python para inicialização.
 
 Leia [README.md](README.md) para visão geral do projeto e [DEPLOY.md](DEPLOY.md) para instalar o runtime Python.
 
@@ -13,64 +13,17 @@ alertas PZAntiCheat, espelho de logs e tarefas recorrentes também rodam no runt
 
 O bot registra os comandos pelo sistema oficial de slash commands do Discord. Com `GUILD_ID` preenchido, eles aparecem imediatamente naquela guild; sem `GUILD_ID`, o registro e global e pode demorar para propagar.
 
-## Configuracao na VM
+## Configuração por Discord no dedicado
 
-1. Crie o arquivo de mapas sem versionar as coordenadas particulares do servidor:
+Criado por **Malaio/Erick**. [English operations and commands](docs/OPERATIONS.en.md).
 
-```bash
-cd /caminho/do/bot
-cp config/pz-maps.example.json config/pz-maps.json
-nano config/pz-maps.json
-```
+Configure o token Discord, a URL/chave Pterodactyl compartilhada e a raiz dos volumes no `.env` do dedicado. Cada Discord cadastra seu próprio ID/UUID, nome, pasta Lua e endpoint RCON em `/config` (alias `/condig`). A validação exige um código temporário em `friendhost-discord-link.txt` na raiz do servidor Pterodactyl e a correspondência do UUID na API.
 
-2. A descoberta dos arquivos de mod e automatica por padrao. Ao iniciar, o bot procura uma pasta `Zomboid/Lua`, reconhece inclusive uma `FriendHost_Data` vazia ou parcial, aplica os caminhos imediatamente e completa os campos vazios do `.env`. Se os mods ainda nao tiverem criado os arquivos no primeiro boot, ele salva os caminhos esperados e passa a enxerga-los assim que surgirem.
+A pasta Lua é relativa ao volume, normalmente `.cache/Lua`; o bot lê `FriendHost_Data/Jogadores` e `FriendHost_Data/Servidor` apenas desse volume. O FriendHost atual grava arquivos delimitados por ponto e vírgula em `.txt`; `.csv.txt` e `.csv` continuam compatíveis. A leitura intensa é local ou em volumes montados no dedicado. Não há descoberta global automática que alterne entre clientes ou reescreva o `.env` durante a execução do bot.
 
-O FriendHost atual grava dados delimitados por ponto e virgula em `.txt`. O bot prefere esse formato e mantem leitura compativel com os antigos `.csv.txt` e `.csv`. A variavel `CSV_BASE_PATH` conserva o nome antigo apenas para nao quebrar instalacoes existentes.
+A senha RCON vem do INI do PZ dentro do volume; o host e a porta publicados são configuráveis em **RCON publicado**, incluindo o nome do INI se houver vários. Os canais e regras ficam em `/config_bot`. `GUILD_ID` é opcional e limita a importação da configuração antiga àquela guild; os comandos também são registrados globalmente.
 
-Os locais verificados incluem `/root`, `/home`, `/home/container`, `/mnt/server`, `/srv` e volumes em `/var/lib/pterodactyl/volumes`. O log de inicializacao mostra `Descoberta PZ` quando encontra os arquivos.
-
-Configuracao automatica padrao:
-
-```env
-PZ_AUTO_DISCOVER_PATHS=1
-PZ_LUA_PATH=
-PZ_PATH_SCAN_ROOTS=
-CSV_BASE_PATH=
-LOGS_PATH=
-ANTICHEAT_CSV_PATH=
-```
-
-Qualquer campo preenchido manualmente tem prioridade e nunca e substituido. Se houver mais de uma instalacao PZ na VM, selecione apenas a pasta correta; os demais caminhos continuam automaticos:
-
-```env
-PZ_LUA_PATH=/root/Zomboid/Lua
-```
-
-Para procurar em uma raiz personalizada ou desativar completamente a descoberta:
-
-```env
-PZ_PATH_SCAN_ROOTS=/caminho/um,/caminho/dois
-PZ_AUTO_DISCOVER_PATHS=0
-```
-
-3. Com `PTERO_URL`, `PTERO_SERVER_ID` e `PTERO_API_KEY` configurados, o bot tambem procura automaticamente o save pela API do painel. Ele reconhece o diretorio correto por arquivos como `players.db`, `map_meta.bin`, `map_*.bin` e `zpop_*.bin`, preenchendo `PZ_SAVE_ROOT` no `.env`. O caminho do CSV do anticheat dentro do painel tambem e descoberto.
-
-Assim, normalmente estes campos ficam vazios:
-
-```env
-PZ_SAVE_ROOT=
-PZ_WIPE_BACKUP_WAIT_MS=600000
-ANTICHEAT_PTERO_CSV_PATH=
-```
-
-Os campos continuam aceitando configuracao manual, que sempre tem prioridade. Se o painel possuir mais de um save com a mesma pontuacao, o bot nao escolhe sozinho para evitar wipe no mundo errado. A chave Client API do Pterodactyl precisa permitir energia, console, leitura/edicao/exclusao de arquivos e criacao/restauracao de backups.
-
-4. Reinicie e acompanhe o registro:
-
-```bash
-pm2 restart friendhost-pz-bot --update-env
-pm2 logs friendhost-pz-bot --lines 100
-```
+Mapas continuam em `config/pz-maps.json`, criado a partir do exemplo. Reinicie o processo PM2 usando o nome real definido em `PM2_APP_NAME`. Consulte [README.md](README.md) para os limites das filas e [DEPLOY.md](DEPLOY.md) para migração e orçamento de memória.
 
 ## Comandos publicos
 
@@ -85,13 +38,13 @@ Os comandos dependem dos arquivos FriendHost apontados por `CSV_BASE_PATH`. A lo
 - `/painel jogadores vincular|desvincular` relaciona o nick PZ a uma conta Discord.
 - `/painel restart|stop|recursos` controla o servidor e exibe recursos.
 - `/automacao criar|listar|remover|pausar|retomar|executar|backupagora` gerencia rotinas diárias ou por dia da semana.
-- `/config_bot` permite escolher os canais de status, ranking, evolução e anticheat. As mensagens de status e ranking são atualizadas a cada 60 segundos.
+- `/config` (ou `/condig`) vincula o Discord ao ID/UUID do servidor Pterodactyl, com confirmação por arquivo. `/config_bot` escolhe os canais de status, ranking, chat, evolução e anticheat. As mensagens de status e ranking são atualizadas aproximadamente a cada 10 minutos, em fila distribuída entre as guilds.
 
 As rotinas monitoram aumentos de skills, novas mortes FriendHost e os logs de chat/login/logout. Alertas PZAntiCheat são agrupados e encaminhados ao canal configurado. `WEBHOOK_CHAT` continua opcional para espelhar as mensagens do jogo.
 
 ## Fiscalização RP por call de voz
 
-1. Em **Config WL**, selecione o servidor PZ que a fiscalização deverá consultar. O comando usa o RCON configurado para esse servidor.
+1. Em `/config`, valide o servidor PZ deste Discord e configure o endpoint RCON publicado se necessário. A fiscalização usa somente esse servidor vinculado.
 2. Para cada conta, vincule o usuário PZ ao membro correto do Discord com `/painel jogadores vincular` usando o nome de login exato do PZ.
 3. Como administrador, execute `/config_kick_automatico`, selecione a call obrigatória e pressione **Ativar / pausar fiscalização**. Antes de ativar, o bot valida RCON, `/players` e os vínculos dos jogadores que já estão online.
 

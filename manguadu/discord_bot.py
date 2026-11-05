@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from .tenant_scope import getenv, current_scope, activate, use_scope, scoped_guilds, GuildScope, tenant_path
+
 import asyncio
 import io
 import logging
 import os
 import re
 import sqlite3
+from pathlib import Path
 from collections import defaultdict
 from typing import Any
 
@@ -17,16 +20,19 @@ from cryptography.fernet import InvalidToken
 from discord import app_commands
 
 from .config_store import ConfigStore
+from .guild_runtime import GuildRuntime, normalize_binding
+from .guild_ui import GuildCommandTree, GuildView, GuildModal, ServerConfigView
+from .work_queue import StaggeredQueue, TransientJobError
 from .automation_scheduler import AutomationScheduler, get_timezone
 from .anticheat_alerts import AntiCheatMonitor
 from .bot_updater import BotUpdater
 from .credentials import decrypt_password, encrypt_password
 from .gemini import GEMINI_MODEL, GeminiError, evaluate_lore_with_gemini, test_gemini_key
+from .lore_drafts import save_draft, load_draft, cleanup_drafts
 from .lore import MAX_LORE_CHARS, LoreResult, evaluate_lore
 from .pterodactyl import PterodactylClient, extract_ptero_error
 from .pz_data import PzData
 from .pz_map_renderer import create_map_png
-from .pz_path_discovery import discover_and_persist_ptero_paths
 from .panel_player_links import get_player_link, load_player_links, remove_player_link, set_player_link
 from .panel_reports import build_ranking_panel, build_server_panel, build_server_status_embed
 from .panel_theme import get_draft_theme, save_draft_theme, store_panel_media, update_draft_theme
@@ -184,24 +190,30 @@ async def _admin_guard(interaction: discord.Interaction, store: ConfigStore) -> 
 
 
 def _home_embed(config: dict[str, Any]) -> discord.Embed:
-    embed = discord.Embed(title="⚙️ Configuração do Friendhost - PZ/Bot", description="Escolha uma seção abaixo. Alterações são salvas para este servidor Discord.", color=0x28D17C)
+    embed = discord.Embed(title="⚙️ Configuração do HTS Bot Multi servers", description="Escolha uma seção abaixo. Alterações são salvas para este servidor Discord.", color=0x28D17C)
     embed.add_field(name="Tickets", value=f"Painel: {_channel_display(config['channels']['ticket_panel'])}\nCategoria: {_channel_display(config['ticket_category_id'])}", inline=False)
     embed.add_field(name="Whitelist", value=f"{'Ativa' if config['wl']['enabled'] else 'Pausada'} • Lore {'obrigatória' if config['wl']['require_lore'] else 'opcional'} • PZ: `{config['wl']['server_id']}`", inline=False)
-    embed.set_footer(text="Discord, Pterodactyl e RCON ficam no .env. Configure o Gemini por /config_api.")
+    embed.set_footer(text="Vincule o servidor em /config. Chaves de infraestrutura ficam no dedicado; Gemini em /config_api.")
     return embed
 
 
-class AdminView(discord.ui.View):
+class AdminView(GuildView):
+    require_binding = False
     def __init__(self, bot: "ManguaduBot", guild_id: int):
         super().__init__(timeout=600)
         self.bot = bot
         self.guild_id = guild_id
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _admin_guard(interaction, self.bot.store)
+        return await super().interaction_check(interaction) and await _admin_guard(interaction, self.bot.store)
 
 
 class ConfigHomeView(AdminView):
+    @discord.ui.button(label="Servidor PZ /config", style=discord.ButtonStyle.secondary)
+    async def server_binding(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        view = ServerConfigView(self.bot, self.guild_id)
+        await interaction.response.edit_message(embed=view.embed(), view=view)
+
     @discord.ui.button(label="Canais", emoji="📺", style=discord.ButtonStyle.primary)
     async def channels(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.edit_message(embed=discord.Embed(title="📺 Canais do bot", description="Escolha a função e depois selecione o canal. Os IDs ficam salvos pelo Discord.", color=0x28D17C), view=ChannelsView(self.bot, self.guild_id))
@@ -242,7 +254,7 @@ class KickAutoConfigView(AdminView):
             description=(
                 f"Fiscalização: **{'ATIVA' if kick_config['enabled'] else 'pausada'}**\n"
                 f"Call obrigatória: {_channel_display(channel_id)}\n\n"
-                f"Servidor PZ (definido em Config WL): `{config['wl']['server_id']}`\n\n"
+                "Servidor PZ: vínculo exclusivo definido em /config.\n\n"
                 "A cada 10 segundos, o bot consulta `/players` via RCON e compara os usuários PZ com os vínculos PZ/Discord. "
                 "Quem ficar fora da call escolhida por 60 segundos recebe kick com o nome da call no motivo.\n\n"
                 "Vincule cada jogador antes de ativar usando `/painel jogadores vincular`. Jogadores sem vínculo também contam como fora da call. "
@@ -372,12 +384,12 @@ def wl_embed(config: dict[str, Any]) -> discord.Embed:
     embed.add_field(name="Canal da lore", value=_channel_display(config["channels"]["lore"]))
     embed.add_field(name="Auditoria", value=_channel_display(config["channels"]["wl_audit"]))
     embed.add_field(name="Decisões", value=_channel_display(config["channels"]["wl_decisions"]))
-    embed.add_field(name="Servidor PZ", value=f"`{wl['server_id']}`")
+    embed.add_field(name="Servidor PZ", value="Vínculo exclusivo definido em /config")
     embed.add_field(name="Lore base", value=f"{len(wl['lore_reference'])} caracteres configurados", inline=False)
     return embed
 
 
-class LoreReferenceModal(discord.ui.Modal, title="Lore base da whitelist"):
+class LoreReferenceModal(GuildModal, title="Lore base da whitelist"):
     def __init__(self, bot: "ManguaduBot", guild_id: int):
         super().__init__()
         self.bot = bot
@@ -396,8 +408,11 @@ class LoreReferenceModal(discord.ui.Modal, title="Lore base da whitelist"):
 class WhitelistConfigView(AdminView):
     def __init__(self, bot: "ManguaduBot", guild_id: int):
         super().__init__(bot, guild_id)
-        servers = bot.registry.list_servers()[:25]
-        server_select = discord.ui.Select(placeholder="Servidor PZ da whitelist", options=[discord.SelectOption(label=s["label"][:100], value=s["id"][:100]) for s in servers])
+        scope = bot.scope_for(guild_id)
+        servers = [scope.server] if scope.server else []
+        if not servers:
+            return
+        server_select = discord.ui.Select(placeholder="Servidor PZ vinculado a este Discord", options=[discord.SelectOption(label=s["label"][:100], value=s["id"][:100]) for s in servers])
         server_select.callback = self.select_server
         self.add_item(server_select)
 
@@ -492,7 +507,7 @@ class WhitelistChannelsView(AdminView):
         await interaction.response.edit_message(embed=wl_embed(self.bot.store.get_settings(self.guild_id)), view=WhitelistConfigView(self.bot, self.guild_id))
 
 
-class PublicTicketView(discord.ui.View):
+class PublicTicketView(GuildView):
     def __init__(self, bot: "ManguaduBot"):
         super().__init__(timeout=None)
         self.bot = bot
@@ -502,7 +517,7 @@ class PublicTicketView(discord.ui.View):
         await self.bot.open_ticket(interaction)
 
 
-class TicketActionView(discord.ui.View):
+class TicketActionView(GuildView):
     def __init__(self, bot: "ManguaduBot"):
         super().__init__(timeout=None)
         self.bot = bot
@@ -535,9 +550,10 @@ class TicketActionView(discord.ui.View):
         await self.bot.close_ticket(interaction)
 
 
-class WhitelistModal(discord.ui.Modal, title="Criação de personagem PZ"):
-    def __init__(self, bot: "ManguaduBot", ticket: dict[str, Any], require_lore: bool, lore_file_text: str | None = None):
-        super().__init__()
+class WhitelistModal(GuildModal, title="Criação de personagem PZ"):
+    require_binding = True
+    def __init__(self, bot: "ManguaduBot", ticket: dict[str, Any], require_lore: bool, lore_file_text: str | Path | None = None):
+        super().__init__(timeout=300)
         self.bot = bot
         self.ticket = ticket
         self.require_lore = require_lore
@@ -552,18 +568,26 @@ class WhitelistModal(discord.ui.Modal, title="Criação de personagem PZ"):
             self.lore = discord.ui.TextInput(label="História do personagem (até 4.000)", style=discord.TextStyle.paragraph, required=require_lore, max_length=4000, placeholder="Para uma história maior, use Enviar lore longa (.txt).")
             self.add_item(self.lore)
 
+    async def on_timeout(self) -> None:
+        if isinstance(self.lore_file_text, Path):
+            self.lore_file_text.unlink(missing_ok=True)
+
     async def on_submit(self, interaction: discord.Interaction) -> None:
         lore = self.lore_file_text if self.lore_file_text is not None else str(self.lore.value or "").strip()
         self.lore_file_text = None
         await self.bot.submit_whitelist(interaction, self.ticket, str(self.username.value).strip(), str(self.character.value).strip(), lore, str(self.password.value or ""))
 
 
-class LoreUploadDraftView(discord.ui.View):
-    def __init__(self, bot: "ManguaduBot", ticket: dict[str, Any], lore_text: str):
+class LoreUploadDraftView(GuildView):
+    def __init__(self, bot: "ManguaduBot", ticket: dict[str, Any], lore_text: Path):
         super().__init__(timeout=180)
         self.bot = bot
         self.ticket = ticket
         self.lore_text = lore_text
+
+    async def on_timeout(self) -> None:
+        if isinstance(self.lore_text, Path):
+            self.lore_text.unlink(missing_ok=True)
 
     @discord.ui.button(label="Preencher dados da WL", style=discord.ButtonStyle.primary)
     async def continue_form(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
@@ -579,10 +603,11 @@ class LoreUploadDraftView(discord.ui.View):
             await interaction.response.send_message("A equipe ainda nao definiu a lore base.", ephemeral=True)
             return
         lore_text, self.lore_text = self.lore_text, ""
+        self.stop()
         await interaction.response.send_modal(WhitelistModal(self.bot, current, config["wl"]["require_lore"], lore_text))
 
 
-class GeminiKeyModal(discord.ui.Modal, title="Configurar chave Gemini"):
+class GeminiKeyModal(GuildModal, title="Configurar chave Gemini"):
     def __init__(self, bot: "ManguaduBot", guild_id: int):
         super().__init__()
         self.bot = bot
@@ -660,7 +685,7 @@ class GeminiConfigView(AdminView):
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
 
-class ReviewView(discord.ui.View):
+class ReviewView(GuildView):
     def __init__(self, bot: "ManguaduBot"):
         super().__init__(timeout=None)
         self.bot = bot
@@ -698,7 +723,7 @@ class ReviewView(discord.ui.View):
         await interaction.response.send_modal(RejectReasonModal(self.bot, interaction.channel_id))
 
 
-class RejectReasonModal(discord.ui.Modal, title="Motivo da reprovação"):
+class RejectReasonModal(GuildModal, title="Motivo da reprovação"):
     def __init__(self, bot: "ManguaduBot", channel_id: int):
         super().__init__()
         self.bot = bot
@@ -727,16 +752,149 @@ class RejectReasonModal(discord.ui.Modal, title="Motivo da reprovação"):
 
 
 class ManguaduBot(discord.Client):
+    def scope_for(self, guild_id: int | None) -> GuildScope | None:
+        if guild_id is None:
+            return None
+        runtime = self._runtimes.get(guild_id)
+        return runtime.scope if runtime else GuildScope(guild_id)
+
+    def activate_guild(self, guild_id: int | None) -> GuildScope | None:
+        scope = self.scope_for(guild_id)
+        activate(scope)
+        return scope
+
+    async def install_binding(self, guild_id: int, binding: dict) -> None:
+        previous = self.store.get_binding(guild_id)
+        if previous and previous["uuid"] != binding["uuid"]:
+            raise ValueError("Este Discord ja tem outro volume vinculado. O operador deve migrar o vinculo e os pedidos pendentes antes de trocar de servidor.")
+        if previous:
+            binding = {**previous, **binding}
+        runtime = await asyncio.to_thread(GuildRuntime, self, guild_id, binding)
+        self.store.save_binding(guild_id, binding)
+        self.work_queue.remove_prefix(f"{guild_id}:")
+        self.log_queue.remove_prefix(f"{guild_id}:")
+        self._runtimes[guild_id] = runtime
+        self._clear_kick_auto_state(guild_id)
+        self._schedule_guild(guild_id)
+        self.activate_guild(guild_id)
+        self.work_queue.trigger(f"{guild_id}:panels")
+
+    def _runtime_value(self, attribute: str, fallback: str):
+        scope = current_scope()
+        if scope is not None:
+            if scope.runtime is None:
+                if attribute == "data":
+                    return PzData(None)
+                if attribute == "online_since":
+                    return {}
+                raise RuntimeError("Servidor deste Discord ainda nao foi vinculado em /config.")
+            return getattr(scope.runtime, attribute)
+        return getattr(self, fallback)
+
+    @property
+    def pz_data(self):
+        return self._runtime_value("data", "_legacy_data")
+
+    @pz_data.setter
+    def pz_data(self, value):
+        scope = current_scope()
+        if scope and scope.runtime:
+            scope.runtime.data = value
+        else:
+            self._legacy_data = value
+
+    @property
+    def automations(self):
+        return self._runtime_value("automations", "_legacy_automations")
+
+    @automations.setter
+    def automations(self, value):
+        self._legacy_automations = value
+
+    @property
+    def anticheat(self):
+        return self._runtime_value("anticheat", "_legacy_anticheat")
+
+    @anticheat.setter
+    def anticheat(self, value):
+        self._legacy_anticheat = value
+
+    @property
+    def friendhost_watcher(self):
+        return self._runtime_value("watcher", "_legacy_watcher")
+
+    @friendhost_watcher.setter
+    def friendhost_watcher(self, value):
+        self._legacy_watcher = value
+
+    @property
+    def _online_since(self):
+        return self._runtime_value("online_since", "_legacy_online_since")
+
+    @_online_since.setter
+    def _online_since(self, value):
+        self._legacy_online_since = value
+
+    def _schedule_guild(self, guild_id: int) -> None:
+        for kind, interval, timeout in (("logs", 5, 30), ("panels", 600, 120), ("data", 600, 120), ("anticheat", 30, 45), ("automation", 30, 180), ("kick", 10, 60)):
+            async def callback(kind=kind, guild_id=guild_id):
+                runtime = self._runtimes.get(guild_id)
+                guild = self.get_guild(guild_id)
+                if runtime is None or guild is None or not self.is_ready() or guild.unavailable:
+                    if kind == "kick":
+                        self._clear_kick_auto_state(guild_id)
+                    return
+                with use_scope(runtime.scope):
+                    if kind == "panels":
+                        await self.refresh_panels()
+                    elif kind in {"logs", "data"}:
+                        watcher = runtime.watcher
+                        if kind == "logs" and runtime.watcher_lock.locked():
+                            return
+                        async with runtime.watcher_lock:
+                            if not watcher._initialized:
+                                await watcher.initialize()
+                            await (watcher._scan_logs() if kind == "logs" else watcher._scan_data())
+                            if kind == "data":
+                                await asyncio.to_thread(cleanup_drafts)
+                    elif kind == "anticheat":
+                        await runtime.anticheat.scan(self)
+                    elif kind == "automation":
+                        await runtime.automations.run_due(self._notify_updater)
+                    elif kind == "kick":
+                        if not await self._scan_kick_auto_guild(guild):
+                            raise TransientJobError("fiscalizacao de voz indisponivel neste servidor")
+            target_queue = self.log_queue if kind == "logs" else self.work_queue
+            target_queue.add(f"{guild_id}:{kind}", interval, callback, timeout=timeout)
+
+    async def _run_queues(self) -> None:
+        tasks = [asyncio.create_task(self.work_queue.run()), asyncio.create_task(self.log_queue.run())]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     def __init__(self, store: ConfigStore | None = None):
+        activate(None)
         super().__init__(intents=discord.Intents(guilds=True, voice_states=True))
         self.store = store or ConfigStore()
+        self._runtimes: dict[int, GuildRuntime] = {}
+        self._ptero_session = None
+        self._ptero_limiter = asyncio.Semaphore(3)
+        self._ptero_retry_at = 0.0
+        self._rcon_limiter = asyncio.Semaphore(6)
+        self._large_io_slots = asyncio.Semaphore(2)
+        self.work_queue = StaggeredQueue(workers=3, capacity=256)
+        self.log_queue = StaggeredQueue(workers=2, capacity=128)
         self.registry = ServerRegistry()
-        self.pz_data = PzData(os.getenv("CSV_BASE_PATH"))
+        self.pz_data = PzData(getenv("CSV_BASE_PATH"))
         self.automations = AutomationScheduler(server_provider=self.registry.get_default_server)
         self.anticheat = AntiCheatMonitor(registry=self.registry)
         self.friendhost_watcher = FriendHostWatcher(self)
         self.updater = BotUpdater()
-        self.tree = app_commands.CommandTree(self)
+        self.tree = GuildCommandTree(self)
         self._ticket_locks: dict[tuple[int, int], asyncio.Lock] = defaultdict(asyncio.Lock)
         self._wl_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._registered = False
@@ -752,7 +910,22 @@ class ManguaduBot(discord.Client):
         self._anticheat_task: asyncio.Task | None = None
         self._watcher_task: asyncio.Task | None = None
 
-        @self.tree.command(name="config_bot", description="Configura canais, tickets e whitelist do Friendhost - PZ/Bot")
+        @self.tree.command(name="config", description="Vincula este Discord ao servidor PZ e configura o bot")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.guild_only()
+        async def config_server(interaction: discord.Interaction) -> None:
+            if not await _admin_guard(interaction, self.store):
+                return
+            view = ServerConfigView(self, interaction.guild.id)
+            await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
+
+        @self.tree.command(name="condig", description="Abre a configuração do servidor PZ deste Discord")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.guild_only()
+        async def config_alias(interaction: discord.Interaction) -> None:
+            await config_server.callback(interaction)
+
+        @self.tree.command(name="config_bot", description="Configura canais, tickets e whitelist do HTS Bot Multi servers")
         @app_commands.default_permissions(administrator=True)
         @app_commands.guild_only()
         async def config_bot(interaction: discord.Interaction) -> None:
@@ -787,23 +960,24 @@ class ManguaduBot(discord.Client):
             if not await _admin_guard(interaction, self.store):
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
-            content, error = await _read_lore_attachment(arquivo)
-            if error:
-                await interaction.followup.send(error, ephemeral=True)
-                return
-            if len(content) < 80:
-                await interaction.followup.send("A lore base precisa ter pelo menos 80 caracteres.", ephemeral=True)
-                return
-            try:
-                await asyncio.to_thread(self.store.set_value, interaction.guild.id, "wl", "lore_reference", content)
-            except ValueError as exc:
-                await interaction.followup.send(str(exc), ephemeral=True)
-                return
-            compressed_bytes = len(content.encode("utf-8"))
-            await interaction.followup.send(
-                f"Lore base salva: {len(content):,} caracteres. Armazenamento SQLite comprimido (arquivo original: {compressed_bytes:,} bytes).",
-                ephemeral=True,
-            )
+            async with self._large_io_slots:
+                content, error = await _read_lore_attachment(arquivo)
+                if error:
+                    await interaction.followup.send(error, ephemeral=True)
+                    return
+                if len(content) < 80:
+                    await interaction.followup.send("A lore base precisa ter pelo menos 80 caracteres.", ephemeral=True)
+                    return
+                try:
+                    await asyncio.to_thread(self.store.set_value, interaction.guild.id, "wl", "lore_reference", content)
+                except ValueError as exc:
+                    await interaction.followup.send(str(exc), ephemeral=True)
+                    return
+                compressed_bytes = len(content.encode("utf-8"))
+                await interaction.followup.send(
+                    f"Lore base salva: {len(content):,} caracteres. Armazenamento SQLite comprimido (arquivo original: {compressed_bytes:,} bytes).",
+                    ephemeral=True,
+                )
 
         wl_group = app_commands.Group(name="wl", description="Envia uma candidatura de whitelist neste ticket")
 
@@ -827,18 +1001,19 @@ class ManguaduBot(discord.Client):
                 await interaction.response.send_message("Ja existe um pedido de WL em andamento neste ticket.", ephemeral=True)
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
-            content, error = await _read_lore_attachment(arquivo)
-            if error:
-                await interaction.followup.send(error, ephemeral=True)
-                return
-            if len(content) < 120:
-                await interaction.followup.send("A historia do personagem precisa ter pelo menos 120 caracteres.", ephemeral=True)
-                return
-            await interaction.followup.send(
-                f"Arquivo recebido ({len(content):,} caracteres). Clique para preencher seus dados no formulario privado.",
-                view=LoreUploadDraftView(self, ticket, content),
-                ephemeral=True,
-            )
+            async with self._large_io_slots:
+                content, error = await _read_lore_attachment(arquivo)
+                if error:
+                    await interaction.followup.send(error, ephemeral=True)
+                    return
+                if len(content) < 120:
+                    await interaction.followup.send("A historia do personagem precisa ter pelo menos 120 caracteres.", ephemeral=True)
+                    return
+                await interaction.followup.send(
+                    f"Arquivo recebido ({len(content):,} caracteres). Clique para preencher seus dados no formulario privado.",
+                    view=LoreUploadDraftView(self, ticket, await asyncio.to_thread(save_draft, content)),
+                    ephemeral=True,
+                )
 
         @wl_group.command(name="puxar_lore", description="Baixa a lore mais recente enviada por um jogador PZ")
         @app_commands.describe(jogador="Nome exato do usuário PZ informado na WL")
@@ -848,45 +1023,46 @@ class ManguaduBot(discord.Client):
             if not await _admin_guard(interaction, self.store):
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
-            request = await asyncio.to_thread(
-                self.store.get_latest_request_by_username,
-                interaction.guild.id,
-                jogador,
-            )
-            if not request:
-                await interaction.followup.send(f"Não encontrei uma WL para o usuário PZ `{discord.utils.escape_markdown(jogador)}` neste servidor.", ephemeral=True)
-                return
-            lore = request.get("lore", "")
-            if not lore:
-                await interaction.followup.send("Esse pedido não contém uma lore para baixar.", ephemeral=True)
-                return
-            try:
-                files = await asyncio.to_thread(_make_lore_files, lore, request["username"], interaction.guild.filesize_limit)
-            except ValueError as exc:
-                await interaction.followup.send(str(exc), ephemeral=True)
-                return
-            status = clean_text(request.get("status", "desconhecido"))
-            message = (
-                f"Lore mais recente de `{discord.utils.escape_markdown(request['username'])}` "
-                f"(pedido: **{discord.utils.escape_markdown(status)}**)."
-            )
-            try:
-                for index, file in enumerate(files, start=1):
-                    content = message if index == 1 else f"Continuação da lore: parte {index} de {len(files)}."
-                    await interaction.followup.send(
-                        content=content,
-                        file=file,
-                        ephemeral=True,
-                        allowed_mentions=discord.AllowedMentions.none(),
-                    )
-            except discord.HTTPException:
-                for file in files:
-                    file.close()
-                logger.exception("Falha ao entregar a lore de %s pela interacao WL", request["username"])
-                await interaction.followup.send(
-                    "O Discord recusou o anexo. Confira o limite de upload deste servidor e tente novamente.",
-                    ephemeral=True,
+            async with self._large_io_slots:
+                request = await asyncio.to_thread(
+                    self.store.get_latest_request_by_username,
+                    interaction.guild.id,
+                    jogador,
                 )
+                if not request:
+                    await interaction.followup.send(f"Não encontrei uma WL para o usuário PZ `{discord.utils.escape_markdown(jogador)}` neste servidor.", ephemeral=True)
+                    return
+                lore = request.get("lore", "")
+                if not lore:
+                    await interaction.followup.send("Esse pedido não contém uma lore para baixar.", ephemeral=True)
+                    return
+                try:
+                    files = await asyncio.to_thread(_make_lore_files, lore, request["username"], interaction.guild.filesize_limit)
+                except ValueError as exc:
+                    await interaction.followup.send(str(exc), ephemeral=True)
+                    return
+                status = clean_text(request.get("status", "desconhecido"))
+                message = (
+                    f"Lore mais recente de `{discord.utils.escape_markdown(request['username'])}` "
+                    f"(pedido: **{discord.utils.escape_markdown(status)}**)."
+                )
+                try:
+                    for index, file in enumerate(files, start=1):
+                        content = message if index == 1 else f"Continuação da lore: parte {index} de {len(files)}."
+                        await interaction.followup.send(
+                            content=content,
+                            file=file,
+                            ephemeral=True,
+                            allowed_mentions=discord.AllowedMentions.none(),
+                        )
+                except discord.HTTPException:
+                    for file in files:
+                        file.close()
+                    logger.exception("Falha ao entregar a lore de %s pela interacao WL", request["username"])
+                    await interaction.followup.send(
+                        "O Discord recusou o anexo. Confira o limite de upload deste servidor e tente novamente.",
+                        ephemeral=True,
+                    )
 
         self.tree.add_command(wl_group)
 
@@ -1207,7 +1383,7 @@ class ManguaduBot(discord.Client):
                 return
             maps = await asyncio.to_thread(self.pz_data.configured_maps)
             safehouses = await asyncio.to_thread(self.pz_data.safehouses)
-            radius = max(900, int(to_number(os.getenv("PZ_GPS_VIEW_RADIUS"), 1500)))
+            radius = max(900, int(to_number(getenv("PZ_GPS_VIEW_RADIUS"), 1500)))
             cell_x, cell_y = int(point["x"] // 300), int(point["y"] // 300)
             chunk_x, chunk_y = int(point["x"] // 10), int(point["y"] // 10)
             map_entry = self.pz_data.map_for_point(point, maps)
@@ -1634,7 +1810,7 @@ class ManguaduBot(discord.Client):
                 message += f"\n... e mais {len(deleted) - 45}"
             if failed:
                 message += f"\nFalhas: {len(failed)}\n" + "\n".join(f"- {item}" for item in failed[:10])
-            self.pz_data = PzData(os.getenv("CSV_BASE_PATH"))
+            self.pz_data = PzData(getenv("CSV_BASE_PATH"))
             await interaction.followup.send(message[:1900], ephemeral=True)
 
         async def autocomplete_player(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
@@ -1740,17 +1916,17 @@ class ManguaduBot(discord.Client):
             players, factions, deaths = await asyncio.gather(
                 asyncio.to_thread(self.pz_data.player_rows),
                 asyncio.to_thread(self.pz_data.faction_rows),
-                asyncio.to_thread(self.pz_data.death_rows),
+                asyncio.to_thread(self.pz_data.death_counts),
             )
-            embeds, files = build_ranking_panel(players, factions, deaths, theme=theme)
+            embeds, files = await asyncio.to_thread(build_ranking_panel, players, factions, deaths, theme=theme)
         else:
             overview = await self._build_panel_overview(self.registry.get_default_server())
             players = await asyncio.to_thread(self.pz_data.player_rows)
             profiles = await self._online_profiles(overview["onlinePlayers"]["names"], players)
             embeds, files = build_server_panel(
                 overview, online_profiles=profiles, theme=theme,
-                max_slots=int(os.getenv("SERVER_MAX_SLOTS")) if os.getenv("SERVER_MAX_SLOTS", "").isdigit() else None,
-                connect_address=self.registry.get_default_server().get("connectAddress") or os.getenv("SERVER_CONNECT_ADDRESS", ""),
+                max_slots=int(getenv("SERVER_MAX_SLOTS")) if getenv("SERVER_MAX_SLOTS", "").isdigit() else None,
+                connect_address=self.registry.get_default_server().get("connectAddress") or getenv("SERVER_CONNECT_ADDRESS", ""),
             )
         await interaction.followup.send(embeds=embeds, files=files, ephemeral=True)
 
@@ -1798,17 +1974,14 @@ class ManguaduBot(discord.Client):
                 self._online_since.pop(key, None)
         now = asyncio.get_running_loop().time()
         profiles = []
+        rows_by_name = {get_field(entry.get("row", entry), ["username"]).casefold(): entry.get("row", entry) for entry in player_rows}
+        links_by_name = {name.casefold(): user_id for name, user_id in (await asyncio.to_thread(load_player_links)).items()}
         for nick in online_names:
             key = nick.casefold()
             started = self._online_since.setdefault(key, now)
-            row = next((entry.get("row", entry) for entry in player_rows if get_field(entry.get("row", entry), ["username"]).casefold() == key), {})
-            link = get_player_link(nick)
+            row = rows_by_name.get(key, {})
+            link = links_by_name.get(nick.casefold(), "")
             user = self.get_user(int(link)) if link and link.isdigit() else None
-            if link and user is None:
-                try:
-                    user = await self.fetch_user(int(link))
-                except discord.HTTPException:
-                    pass
             seconds = max(0, int(now - started))
             duration = f"{seconds // 3600}h {seconds % 3600 // 60}m" if seconds >= 3600 else f"{seconds // 60}m"
             profiles.append({
@@ -1825,7 +1998,7 @@ class ManguaduBot(discord.Client):
         if not isinstance(channel, discord.TextChannel):
             try:
                 fetched = await self.fetch_channel(channel_id)
-                channel = fetched if isinstance(fetched, discord.TextChannel) else None
+                channel = fetched if isinstance(fetched, discord.TextChannel) and fetched.guild.id == guild.id else None
             except discord.HTTPException:
                 channel = None
         if channel is None:
@@ -1863,9 +2036,18 @@ class ManguaduBot(discord.Client):
             logger.exception("Falha ao publicar painel %s na guild %s", channel_key, guild.id)
 
     async def refresh_panels(self) -> None:
+        if current_scope() is None:
+            for guild in self.guilds:
+                runtime = self._runtimes.get(guild.id)
+                if runtime:
+                    with use_scope(runtime.scope):
+                        await self.refresh_panels()
+            return
+        if current_scope().runtime is None:
+            return
         if not self.user:
             return
-        for guild in self.guilds:
+        for guild in scoped_guilds(self):
             config = self.store.get_settings(guild.id)
             if config["channels"].get("stats"):
                 server = self.registry.get_default_server()
@@ -1874,28 +2056,19 @@ class ManguaduBot(discord.Client):
                 profiles = await self._online_profiles(overview["onlinePlayers"]["names"], players)
                 embeds, files = build_server_panel(
                     overview, online_profiles=profiles,
-                    max_slots=int(os.getenv("SERVER_MAX_SLOTS")) if os.getenv("SERVER_MAX_SLOTS", "").isdigit() else None,
-                    connect_address=server.get("connectAddress") or os.getenv("SERVER_CONNECT_ADDRESS", ""),
+                    max_slots=int(getenv("SERVER_MAX_SLOTS")) if getenv("SERVER_MAX_SLOTS", "").isdigit() else None,
+                    connect_address=server.get("connectAddress") or getenv("SERVER_CONNECT_ADDRESS", ""),
                 )
                 await self._upsert_panel_message(guild, config, "stats", "stats_panel_message_id", embeds, files)
-            if config["channels"].get("ranking"):
+            if config["channels"].get("ranking") and self.pz_data.base_path and self.pz_data.base_path.is_dir():
                 players, factions, deaths = await asyncio.gather(
                     asyncio.to_thread(self.pz_data.player_rows),
                     asyncio.to_thread(self.pz_data.faction_rows),
-                    asyncio.to_thread(self.pz_data.death_rows),
+                    asyncio.to_thread(self.pz_data.death_counts),
                 )
-                embeds, files = build_ranking_panel(players, factions, deaths)
+                embeds, files = await asyncio.to_thread(build_ranking_panel, players, factions, deaths)
                 await self._upsert_panel_message(guild, config, "ranking", "ranking_panel_message_id", embeds, files)
 
-    async def _panel_refresh_loop(self) -> None:
-        while not self.is_closed():
-            try:
-                await self.refresh_panels()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Falha na atualizacao periodica dos paineis")
-            await asyncio.sleep(60)
 
     async def _set_automation(self, interaction: discord.Interaction, automation_id: str, enabled: bool) -> None:
         if not await _admin_guard(interaction, self.store):
@@ -1907,15 +2080,6 @@ class ManguaduBot(discord.Client):
         action = "reativada" if enabled else "pausada"
         await interaction.response.send_message(f"Automação {action}.\n{self.automations.format_line(automation)}", ephemeral=True)
 
-    async def _automation_loop(self) -> None:
-        while not self.is_closed():
-            try:
-                await self.automations.run_due(self._notify_updater)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Falha na execucao periodica das automacoes")
-            await asyncio.sleep(30)
 
     async def _validate_kick_auto_setup(self, guild: discord.Guild | None) -> tuple[bool, str]:
         if guild is None:
@@ -1959,43 +2123,43 @@ class ManguaduBot(discord.Client):
             self._kick_auto_last_warning[guild_id] = now
             logger.warning("Kick automatico pausado na guild %s: %s", guild_id, message)
 
-    async def _scan_kick_auto_guild(self, guild: discord.Guild) -> None:
+    async def _scan_kick_auto_guild(self, guild: discord.Guild) -> bool:
         settings = self.store.get_settings(guild.id)
         kick_config = settings["kick_automatico"]
         if not kick_config["enabled"]:
             self._clear_kick_auto_state(guild.id)
-            return
+            return True
 
         voice_channel = guild.get_channel(kick_config.get("voice_channel_id"))
         if not isinstance(voice_channel, discord.VoiceChannel):
             self._clear_kick_auto_state(guild.id)
             self._kick_auto_log_warning(guild.id, "a call configurada nao existe mais ou nao e uma call de voz")
-            return
+            return False
 
         server = self.registry.get_server(settings["wl"].get("server_id", "default"))
         missing = describe_missing_rcon(server)
         if missing:
             self._clear_kick_auto_state(guild.id)
             self._kick_auto_log_warning(guild.id, f"RCON incompleto: {', '.join(missing)}")
-            return
+            return False
 
         rcon = server["rcon"]
         response = await send_rcon_command(rcon["host"], int(rcon["port"]), rcon["password"], "players")
         if not response.ok:
             self._clear_kick_auto_state(guild.id)
             self._kick_auto_log_warning(guild.id, response.error)
-            return
+            return False
         names = _parse_players_snapshot(response.output)
         if names is None:
             self._clear_kick_auto_state(guild.id)
             self._kick_auto_log_warning(guild.id, "a resposta de `/players` nao e uma lista completa reconhecivel")
-            return
+            return False
 
         links = await asyncio.to_thread(load_player_links)
         if names and not links:
             self._clear_kick_auto_state(guild.id)
             self._kick_auto_log_warning(guild.id, "o arquivo de vinculos PZ/Discord esta vazio ou indisponivel")
-            return
+            return False
         links_by_name = {name.casefold(): user_id for name, user_id in links.items()}
         voice_member_ids = set(voice_channel.voice_states)
         now = asyncio.get_running_loop().time()
@@ -2044,31 +2208,15 @@ class ManguaduBot(discord.Client):
                         logger.warning("Nao foi possivel registrar o kick automatico no canal admin da guild %s", guild.id)
             else:
                 self._kick_auto_log_warning(guild.id, f"falha ao expulsar {name}: {kick_result.error}")
-
-    async def _kick_auto_loop(self) -> None:
-        while not self.is_closed():
-            for guild in self.guilds:
-                try:
-                    await self._scan_kick_auto_guild(guild)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    self._clear_kick_auto_state(guild.id)
-                    logger.exception("Erro na fiscalizacao de voz da guild %s", guild.id)
-            await asyncio.sleep(10)
-
-    async def _anticheat_loop(self) -> None:
-        while not self.is_closed():
-            try:
-                await self.anticheat.scan(self)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Falha no leitor de alertas PZAntiCheat")
-            interval = max(5000, int(to_number(os.getenv("ANTICHEAT_POLL_INTERVAL_MS"), 15000))) / 1000
-            await asyncio.sleep(interval)
+        return True
 
     async def setup_hook(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=4, thread_name_prefix="pz-files"))
+        self._ptero_session = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(limit=8, limit_per_host=4),
+            timeout=aiohttp.ClientTimeout(total=15),
+        )
         self.add_view(PublicTicketView(self))
         self.add_view(TicketActionView(self))
         self.add_view(ReviewView(self))
@@ -2085,72 +2233,127 @@ class ManguaduBot(discord.Client):
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        if self._ptero_session is not None:
+            await self._ptero_session.close()
+            self._ptero_session = None
         await super().close()
         self.store.close()
 
     async def on_ready(self) -> None:
+        activate(None)
         logger.info("Bot Python online como %s", self.user)
-        if not self._ptero_paths_discovered:
-            try:
-                await discover_and_persist_ptero_paths()
-                self.registry.reset()
-                self.pz_data = PzData(os.getenv("CSV_BASE_PATH"))
-            except Exception:
-                logger.exception("Falha ao descobrir caminhos no Pterodactyl")
-            self._ptero_paths_discovered = True
         for guild in self.guilds:
+            binding = self.store.get_binding(guild.id)
+            if not binding and str(guild.id) == os.getenv("GUILD_ID", ""):
+                try:
+                    volume_id = os.getenv("PTERO_VOLUME_ID", "")
+                    if volume_id:
+                        relative_lua = ".cache/Lua"
+                        if os.getenv("PZ_LUA_PATH"):
+                            try:
+                                volume = Path(os.getenv("PTERO_VOLUMES_ROOT", "/var/lib/pterodactyl/volumes")) / volume_id
+                                relative_lua = Path(os.environ["PZ_LUA_PATH"]).resolve().relative_to(volume.resolve()).as_posix()
+                            except ValueError:
+                                pass
+                        binding = normalize_binding(os.getenv("PTERO_SERVER_ID", ""), volume_id, guild.name, relative_lua, os.getenv("SERVER_CONNECT_ADDRESS", ""))
+                        binding["legacy"] = True
+                        self.store.save_binding(guild.id, binding)
+                        self._migrate_legacy_files(guild.id)
+                except (ValueError, sqlite3.IntegrityError):
+                    logger.warning("Cadastro legado requer validacao manual em /config na guild %s", guild.id)
+            if binding and guild.id not in self._runtimes:
+                try:
+                    self._runtimes[guild.id] = await asyncio.to_thread(GuildRuntime, self, guild.id, binding)
+                except (ValueError, OSError):
+                    logger.warning("Volume da guild %s indisponivel; nenhum fallback para outro servidor sera usado", guild.id)
             self._seed_legacy_guild_settings(guild.id)
+            if guild.id in self._runtimes:
+                self._schedule_guild(guild.id)
         if not self._registered:
             await self.register_python_commands()
             self._registered = True
         if not self._panel_refresh_task or self._panel_refresh_task.done():
-            self._panel_refresh_task = asyncio.create_task(self._panel_refresh_loop(), name="manguadu-panels")
-        if not self._automation_task or self._automation_task.done():
-            self._automation_task = asyncio.create_task(self._automation_loop(), name="manguadu-automations")
-        if not self._kick_auto_task or self._kick_auto_task.done():
-            self._kick_auto_task = asyncio.create_task(self._kick_auto_loop(), name="manguadu-kick-automatico")
-        if not self._anticheat_task or self._anticheat_task.done():
-            self._anticheat_task = asyncio.create_task(self._anticheat_loop(), name="manguadu-anticheat")
-        if not self._watcher_task or self._watcher_task.done():
-            self._watcher_task = asyncio.create_task(self.friendhost_watcher.run(), name="manguadu-friendhost-watchers")
+            self._panel_refresh_task = asyncio.create_task(self._run_queues(), name="friendhost-guild-queues")
+
+    def _migrate_legacy_files(self, guild_id: int) -> None:
+        import shutil
+        from .tenant_scope import DATA_ROOT
+        for name in ("panel-theme.json", "panel-theme-draft.json", "panel-player-links.json", "automations.json", "anticheat-alerts-state.json"):
+            source = DATA_ROOT / name
+            target = DATA_ROOT / "guilds" / str(guild_id) / name
+            if source.is_file() and not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        # New guilds remain unbound until their own administrator proves control.
+        binding = self.store.get_binding(guild.id)
+        if binding:
+            try:
+                self._runtimes[guild.id] = await asyncio.to_thread(GuildRuntime, self, guild.id, binding)
+                self._schedule_guild(guild.id)
+            except (ValueError, OSError):
+                logger.warning("Volume indisponivel na guild %s", guild.id)
+        else:
+            logger.info("Guild %s adicionada; aguardando /config", guild.id)
+
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        self.work_queue.remove_prefix(f"{guild.id}:")
+        self.log_queue.remove_prefix(f"{guild.id}:")
+        self._runtimes.pop(guild.id, None)
+        self._clear_kick_auto_state(guild.id)
+
+    async def on_disconnect(self) -> None:
+        for guild_id in self._runtimes:
+            self._clear_kick_auto_state(guild_id)
 
     def _seed_legacy_guild_settings(self, guild_id: int) -> None:
         """Importa IDs de canal do .env uma vez para preservar instalações existentes."""
+        if str(guild_id) != os.getenv("GUILD_ID", ""):
+            return
         mapping = {
             "admin": "ID_CANAL_ADMIN", "evolution": "ID_CANAL_EVOLUCAO",
             "stats": "ID_CANAL_STATS", "ranking": "ID_CANAL_RANKING",
+            "chat": "ID_CANAL_CHAT", "anticheat": "ANTICHEAT_ALERT_CHANNEL_ID",
         }
         settings = self.store.get_settings(guild_id)
         for key, variable in mapping.items():
             if settings["channels"].get(key):
                 continue
-            raw_id = clean_text(os.getenv(variable))
+            raw_id = clean_text(getenv(variable))
             if raw_id.isdigit():
                 self.store.set_value(guild_id, "channels", key, int(raw_id))
 
     async def register_python_commands(self) -> None:
         """Sincroniza o conjunto completo de comandos deste runtime Python."""
-        app_id = self.application_id or int(os.getenv("DISCORD_CLIENT_ID") or self.user.id)
-        guild_id = os.getenv("GUILD_ID", "").strip()
+        app_id = self.application_id or int(getenv("DISCORD_CLIENT_ID") or self.user.id)
+        guild_id = getenv("GUILD_ID", "").strip()
         endpoint = f"https://discord.com/api/v10/applications/{app_id}"
-        endpoint += f"/guilds/{guild_id}/commands" if guild_id else "/commands"
+        endpoints = [endpoint + "/commands"]
+        if guild_id:
+            endpoints.append(endpoint + f"/guilds/{guild_id}/commands")
         headers = {"Authorization": f"Bot {os.environ['DISCORD_TOKEN']}", "Content-Type": "application/json"}
         payloads = [command.to_dict(self.tree) for command in self.tree.get_commands()]
         async with aiohttp.ClientSession() as session:
-            async with session.put(endpoint, json=payloads, headers=headers) as response:
-                if response.status >= 300:
-                    raise RuntimeError(f"Falha ao sincronizar comandos Python: HTTP {response.status}: {(await response.text())[:500]}")
-        logger.info("%d comandos Python sincronizados %s", len(payloads), "na guild" if guild_id else "globalmente")
+            for target in endpoints:
+                async with session.put(target, json=payloads, headers=headers) as response:
+                    if response.status >= 300:
+                        raise RuntimeError(f"Falha ao sincronizar comandos Python: HTTP {response.status}: {(await response.text())[:500]}")
+        logger.info("%d comandos Python sincronizados globalmente", len(payloads))
 
     async def _updater_admin_guard(self, interaction: discord.Interaction) -> bool:
-        if interaction.guild is None or not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Apenas administradores podem usar este comando.", ephemeral=True)
+        app = await self.application_info()
+        owners = {app.owner.id} if app.owner else set()
+        if app.team:
+            owners.add(app.team.owner_id)
+        if interaction.user.id not in owners:
+            await interaction.response.send_message("A atualização desta instância compartilhada é restrita ao proprietário do aplicativo Discord.", ephemeral=True)
             return False
         return True
 
     async def _restart_pm2(self) -> None:
         await asyncio.sleep(3)
-        pm2 = os.getenv("PM2_BIN", "pm2").strip() or "pm2"
+        pm2 = getenv("PM2_BIN", "pm2").strip() or "pm2"
         kwargs: dict[str, Any] = {"cwd": str(self.updater.root), "stdout": asyncio.subprocess.DEVNULL, "stderr": asyncio.subprocess.DEVNULL}
         if os.name != "nt":
             kwargs["start_new_session"] = True
@@ -2160,7 +2363,7 @@ class ManguaduBot(discord.Client):
             logger.exception("Falha ao reiniciar o PM2")
 
     async def _notify_updater(self, message: str) -> None:
-        for guild in self.guilds:
+        for guild in scoped_guilds(self):
             config = self.store.get_settings(guild.id)
             channel = _configured_text_channel(guild, config["channels"].get("admin"))
             if channel:
@@ -2265,7 +2468,7 @@ class ManguaduBot(discord.Client):
         channel = guild.get_channel(channel_id) if channel_id else None
         if not isinstance(channel, discord.TextChannel):
             raise ValueError("Selecione um canal de texto para o painel de tickets.")
-        embed = discord.Embed(title="🎫 Atendimento Friendhost - PZ/Bot", description="Precisa criar seu personagem e receber whitelist no Project Zomboid?\nClique em **Abrir ticket**. Um canal privado será criado para você e a equipe.", color=0x28D17C)
+        embed = discord.Embed(title="🎫 Atendimento HTS Bot Multi servers", description="Precisa criar seu personagem e receber whitelist no Project Zomboid?\nClique em **Abrir ticket**. Um canal privado será criado para você e a equipe.", color=0x28D17C)
         message_id = config["ticket_panel_message_id"]
         message = None
         if message_id:
@@ -2319,7 +2522,7 @@ class ManguaduBot(discord.Client):
             name = f"ticket-{interaction.user.id}"
             channel = None
             try:
-                channel = await guild.create_text_channel(name, category=category, overwrites=overwrites, topic=f"Friendhost - PZ/Bot ticket • usuário {interaction.user.id}", reason=f"Ticket aberto por {interaction.user.id}")
+                channel = await guild.create_text_channel(name, category=category, overwrites=overwrites, topic=f"HTS Bot Multi servers ticket • usuário {interaction.user.id}", reason=f"Ticket aberto por {interaction.user.id}")
                 self.store.create_ticket(guild.id, interaction.user.id, channel.id)
                 embed = discord.Embed(title="🎫 Seu ticket", description="Este canal é privado para você e a equipe. Use o botão abaixo para enviar seu personagem e pedir a WL.", color=0x28D17C)
                 await channel.send(content=interaction.user.mention, embed=embed, view=TicketActionView(self), allowed_mentions=discord.AllowedMentions(users=True))
@@ -2358,31 +2561,41 @@ class ManguaduBot(discord.Client):
             self.store.clear_request_password(interaction.channel_id)
         self.store.close_ticket(interaction.channel_id)
 
-    async def submit_whitelist(self, interaction: discord.Interaction, ticket: dict[str, Any], username: str, character: str, lore: str, password_input: str = "") -> None:
+    async def submit_whitelist(self, interaction, ticket, username, character, lore, password_input="") -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        async with self._large_io_slots:
+            if isinstance(lore, Path):
+                try:
+                    lore = await asyncio.to_thread(load_draft, lore)
+                except (OSError, ValueError) as exc:
+                    await interaction.followup.send("O arquivo temporario da lore expirou. Envie o .txt novamente.", ephemeral=True)
+                    return
+            await self._submit_whitelist_impl(interaction, ticket, username, character, lore, password_input)
+
+    async def _submit_whitelist_impl(self, interaction: discord.Interaction, ticket: dict[str, Any], username: str, character: str, lore: str, password_input: str = "") -> None:
         if interaction.channel_id != ticket["channel_id"] or interaction.user.id != ticket["user_id"] or ticket["status"] != "open":
-            await interaction.response.send_message("Ticket inválido ou fechado.", ephemeral=True)
+            await interaction.followup.send("Ticket inválido ou fechado.", ephemeral=True)
             return
         if len(lore) > MAX_LORE_CHARS:
-            await interaction.response.send_message(f"A lore excede o limite de {MAX_LORE_CHARS:,} caracteres.", ephemeral=True)
+            await interaction.followup.send(f"A lore excede o limite de {MAX_LORE_CHARS:,} caracteres.", ephemeral=True)
             return
         try:
             adduser_command(username, password_input or "A" * 12)
         except ValueError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            await interaction.followup.send(str(exc), ephemeral=True)
             return
         config = self.store.get_settings(ticket["guild_id"])
         wl = config["wl"]
         if not wl["enabled"]:
-            await interaction.response.send_message("A criação de WL está pausada.", ephemeral=True)
+            await interaction.followup.send("A criação de WL está pausada.", ephemeral=True)
             return
         if self.store.username_owner(ticket["guild_id"], username):
-            await interaction.response.send_message("Este usuário PZ já recebeu WL por este bot.", ephemeral=True)
+            await interaction.followup.send("Este usuário PZ já recebeu WL por este bot.", ephemeral=True)
             return
         existing = self.store.get_request(ticket["channel_id"])
         if existing and existing["status"] in ("review", "processing", "approved"):
-            await interaction.response.send_message("Já existe um pedido de WL em andamento neste ticket.", ephemeral=True)
+            await interaction.followup.send("Já existe um pedido de WL em andamento neste ticket.", ephemeral=True)
             return
-        await interaction.response.defer(ephemeral=True, thinking=True)
         result = None
         if wl["require_lore"]:
             try:
@@ -2412,7 +2625,7 @@ class ManguaduBot(discord.Client):
             status = "review" if result.decision == "review" or wl["review_failed_lore"] else "rejected"
         else:
             status = "pending"
-        secret = os.getenv("WL_ENCRYPTION_KEY") or os.getenv("DISCORD_TOKEN", "")
+        secret = getenv("WL_ENCRYPTION_KEY") or getenv("DISCORD_TOKEN", "")
         ciphertext = encrypt_password(password_input, secret) if password_input and status != "rejected" else ""
         await asyncio.to_thread(
             self.store.save_request,
@@ -2565,7 +2778,7 @@ class ManguaduBot(discord.Client):
             if missing:
                 self.store.set_request_status(channel_id, "failed")
                 return f"RCON incompleto para este servidor: {', '.join(missing)}. Configure os segredos na VM."
-            secret = os.getenv("WL_ENCRYPTION_KEY") or os.getenv("DISCORD_TOKEN", "")
+            secret = getenv("WL_ENCRYPTION_KEY") or getenv("DISCORD_TOKEN", "")
             try:
                 password = decrypt_password(request["password_ciphertext"], secret) if request["password_ciphertext"] else generate_password()
             except (InvalidToken, ValueError):

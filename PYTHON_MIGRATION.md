@@ -1,8 +1,8 @@
 # Registro técnico da migração para Python
 
-O Friendhost - PZ/Bot tem runtime Python. A entrada de produção é `python -m manguadu --bot`; `discord.py` processa os comandos de aplicação, as views interativas e os eventos Discord. Não há dependência de Node/npm para executar, testar ou atualizar o bot.
+O HTS Bot Multi servers tem runtime Python. A entrada de produção é `python -m manguadu --bot`; `discord.py` processa os comandos de aplicação, as views interativas e os eventos Discord. Não há dependência de Node/npm para executar, testar ou atualizar o bot.
 
-O nome do pacote importável continua `manguadu` para preservar a estrutura do aplicativo e os comandos usados pela instalação. O nome de distribuição do projeto é `friendhost-pz-bot` e a identidade apresentada aos administradores e jogadores é **Friendhost - PZ/Bot**.
+O nome do pacote importável continua `manguadu` para preservar a estrutura do aplicativo e os comandos usados pela instalação. O nome de distribuição do projeto é `friendhost-pz-bot` e a identidade apresentada aos administradores e jogadores é **HTS Bot Multi servers**.
 
 ## Escopo portado
 
