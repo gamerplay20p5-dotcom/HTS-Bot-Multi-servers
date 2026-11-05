@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import json
 import logging
 import math
@@ -36,7 +38,7 @@ class ServerRegistry:
     def _from_environment(self) -> dict[str, Any]:
         return {
             "id": DEFAULT_SERVER_ID,
-            "label": self._env("PZ_SERVER_LABEL") or "Servidor",
+            "label": self._env("PZ_SERVER_LABEL") or t('Servidor'),
             "difficulty": self._env("PZ_SERVER_DIFFICULTY"),
             "order": 0,
             "ptero": {"url": self._env("PTERO_URL"), "serverId": self._env("PTERO_SERVER_ID"), "apiKey": self._env("PTERO_API_KEY"), "apiKeyEnv": "PTERO_API_KEY"},
@@ -133,7 +135,7 @@ class ServerRegistry:
     def get_default_server(self) -> dict[str, Any]:
         servers = self.list_servers()
         if not servers:
-            raise RuntimeError("Nenhum servidor PZ vinculado a este Discord. Use /config.")
+            raise RuntimeError(t('Nenhum servidor PZ vinculado a este Discord. Use /config.'))
         return servers[0]
 
     def has_multiple_servers(self) -> bool:
@@ -142,19 +144,19 @@ class ServerRegistry:
 
 def describe_missing_config(server: dict[str, Any] | None) -> list[str]:
     if server is None:
-        return ["servidor desconhecido"]
+        return [t('servidor desconhecido')]
     ptero = server.get("ptero", {})
     missing = [label for key, label in (("url", "ptero.url"), ("serverId", "ptero.serverId")) if not ptero.get(key)]
     if not ptero.get("apiKey"):
-        missing.append(f"chave da API do Pterodactyl ({ptero.get('apiKeyEnv') or 'PTERO_API_KEY'})")
+        missing.append(''.join((format(t('chave da API do Pterodactyl ('), ''), format(ptero.get('apiKeyEnv') or 'PTERO_API_KEY', ''), ')')))
     return missing
 
 
 def describe_missing_rcon(server: dict[str, Any] | None) -> list[str]:
     if server is None:
-        return ["servidor desconhecido"]
+        return [t('servidor desconhecido')]
     rcon = server.get("rcon", {})
     missing = [label for key, label in (("host", "rcon.host"), ("port", "rcon.port")) if not rcon.get(key)]
     if not rcon.get("password"):
-        missing.append(f"senha do RCON ({rcon.get('passwordEnv') or 'RCON_PASSWORD'})")
+        missing.append(''.join((format(t('senha do RCON ('), ''), format(rcon.get('passwordEnv') or 'RCON_PASSWORD', ''), ')')))
     return missing

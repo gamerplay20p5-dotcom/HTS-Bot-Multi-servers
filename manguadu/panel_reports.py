@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -92,6 +94,11 @@ def _ranking_description(rows: list, format_value, limit: int = 5) -> str:
 
 def build_ranking_panel(player_rows: list[dict], faction_rows: list[dict], death_rows: list[list[str]] | dict[str, int] | None = None, *, theme: dict | None = None) -> tuple[list[discord.Embed], list[discord.File]]:
     theme = theme or get_saved_theme()
+    if getattr(player_rows, "provider", None) == "none":
+        return [discord.Embed(title=t('Ranking indisponível'), description=t('Nenhuma fonte compatível foi encontrada para o provedor selecionado. Confira /config e o diagnóstico.'), color=0xC74343)], get_theme_attachments(theme, "ranking")
+    if getattr(player_rows, "provider", None) == "ttf" or any(item.get("provider") == "ttf" for item in player_rows):
+        from .stats.reports import ranking_panel
+        return ranking_panel(player_rows, theme), get_theme_attachments(theme, "ranking")
     primary = color_to_number(theme["primaryColor"])
     secondary = color_to_number(theme["secondaryColor"], 0xF0A93B)
     rows = [item.get("row", item) for item in player_rows]
@@ -99,27 +106,27 @@ def build_ranking_panel(player_rows: list[dict], faction_rows: list[dict], death
     total_hours = sum(to_number(get_field(row, ["hourssurvived"])) for row in rows)
     factions = _faction_leaderboard(player_rows, faction_rows)
     deaths = _death_leaderboard(player_rows, death_rows or [])
-    kills = sorted(({"name": get_field(row, ["username"], "Sobrevivente"), "value": to_number(get_field(row, ["zombiekills"]))} for row in rows), key=lambda item: -item["value"])
-    hours = sorted(({"name": get_field(row, ["username"], "Sobrevivente"), "value": to_number(get_field(row, ["hourssurvived"]))} for row in rows), key=lambda item: -item["value"])
+    kills = sorted(({"name": get_field(row, ["username"], t('Sobrevivente')), "value": to_number(get_field(row, ["zombiekills"]))} for row in rows), key=lambda item: -item["value"])
+    hours = sorted(({"name": get_field(row, ["username"], t('Sobrevivente')), "value": to_number(get_field(row, ["hourssurvived"]))} for row in rows), key=lambda item: -item["value"])
     top_factions = []
     for item in factions:
         label = item["name"] + (f" [{item['tag']}]" if item["tag"] else "")
         top_factions.append({**item, "name": label})
 
-    header = discord.Embed(title=f"🏆 {theme['title']} · Hall da Sobrevivência", description=theme["description"], color=primary)
-    header.add_field(name="SOBREVIVENTES", value=f"`{len(rows)}`", inline=True)
-    header.add_field(name="ABATES", value=f"`{int(total_kills):,}`".replace(",", "."), inline=True)
-    header.add_field(name="HORAS VIVIDAS", value=f"`{total_hours:.1f}h`", inline=True)
+    header = discord.Embed(title=''.join(('🏆 ', format(theme['title'], ''), format(t(' · Hall da Sobrevivência'), ''))), description=theme["description"], color=primary)
+    header.add_field(name=t('SOBREVIVENTES'), value=f"`{len(rows)}`", inline=True)
+    header.add_field(name=t('ABATES'), value=f"`{int(total_kills):,}`".replace(",", "."), inline=True)
+    header.add_field(name=t('HORAS VIVIDAS'), value=f"`{total_hours:.1f}h`", inline=True)
     if image := get_media_url(theme.get("rankingBackground")):
         header.set_image(url=image)
     if image := get_media_url(theme.get("thumbnail")):
         header.set_thumbnail(url=image)
     embeds = [header]
     sections = (
-        (kills, secondary, "🧟 CAÇADORES DE ELITE", lambda item: f"{int(item['value']):,}".replace(",", ".") + " eliminações"),
-        (hours, primary, "⌛ VETERANOS DO APOCALIPSE", lambda item: f"{item['value']:.1f} horas sobrevividas"),
-        (top_factions, secondary, "🛡️ DOMÍNIO DAS FACÇÕES", lambda item: f"{int(item['kills']):,}".replace(",", ".") + f" abates · {len(item['members'])} membros"),
-        ([{"name": name, "value": count} for name, count in deaths], 0xC74343, "☠️ OS QUE MAIS VOLTARAM", lambda item: f"{item['value']} mortes registradas"),
+        (kills, secondary, t('🧟 CAÇADORES DE ELITE'), lambda item: f"{int(item['value']):,}".replace(",", ".") + t(' eliminações')),
+        (hours, primary, t('⌛ VETERANOS DO APOCALIPSE'), lambda item: ''.join((format(item['value'], ''.join(('.1f',))), format(t(' horas sobrevividas'), '')))),
+        (top_factions, secondary, t('🛡️ DOMÍNIO DAS FACÇÕES'), lambda item: f"{int(item['kills']):,}".replace(",", ".") + ''.join((format(t(' abates · '), ''), format(len(item['members']), ''), format(t(' membros'), '')))),
+        ([{"name": name, "value": count} for name, count in deaths], 0xC74343, t('☠️ OS QUE MAIS VOLTARAM'), lambda item: ''.join((format(item['value'], ''), format(t(' mortes registradas'), '')))),
     )
     for items, color, title, formatter in sections:
         if items:
@@ -127,8 +134,8 @@ def build_ranking_panel(player_rows: list[dict], faction_rows: list[dict], death
     if factions:
         leader = factions[0]
         label = leader["name"] + (f" [{leader['tag']}]" if leader["tag"] else "")
-        embeds.append(discord.Embed(title="👑 FACÇÃO EM DESTAQUE", description=f"**{label}** lidera com **{int(leader['kills']):,} abates**, **{leader['hours']:.1f} horas** e **{len(leader['members'])} membros**.".replace(",", "."), color=primary))
-    embeds[-1].set_footer(text="Ranking atualizado silenciosamente a cada 10 minutos")
+        embeds.append(discord.Embed(title=t('👑 FACÇÃO EM DESTAQUE'), description=''.join(('**', format(label, ''), format(t('** lidera com **'), ''), format(int(leader['kills']), ''.join((',',))), format(t(' abates**, **'), ''), format(leader['hours'], ''.join(('.1f',))), format(t(' horas** e **'), ''), format(len(leader['members']), ''), format(t(' membros**.'), ''))).replace(",", "."), color=primary))
+    embeds[-1].set_footer(text=t('Ranking atualizado silenciosamente a cada 10 minutos'))
     embeds[-1].timestamp = datetime.now(timezone.utc)
     return embeds, get_theme_attachments(theme, "ranking")
 
@@ -145,28 +152,28 @@ def build_server_panel(overview: dict, *, online_profiles: list[dict] | None = N
     now_ms = datetime.now(timezone.utc).timestamp() * 1000
     last_boot = int((now_ms - uptime) / 1000) if uptime > 0 else 0
     players = overview.get("onlinePlayers", {"count": 0, "names": [], "source": "none"})
-    state = str(overview.get("currentState") or "desconhecido").lower()
-    labels = {"running": "ONLINE", "starting": "INICIANDO", "stopping": "DESLIGANDO", "offline": "OFFLINE"}
-    main = discord.Embed(title=theme["title"], description=f"{'🟢 **MUNDO OPERACIONAL**' if overview.get('isOnline') else '🔴 **MUNDO INDISPONÍVEL**'}\n{theme['description']}", color=primary if overview.get("isOnline") else 0xC74343)
+    state = str(overview.get("currentState") or t('desconhecido')).lower()
+    labels = {"running": "ONLINE", "starting": t('INICIANDO'), "stopping": t('DESLIGANDO'), "offline": "OFFLINE"}
+    main = discord.Embed(title=theme["title"], description=''.join((format(t('🟢 **MUNDO OPERACIONAL**') if overview.get('isOnline') else t('🔴 **MUNDO INDISPONÍVEL**'), ''), '\n', format(theme['description'], ''))), color=primary if overview.get("isOnline") else 0xC74343)
     main.add_field(name="STATUS", value=f"`{labels.get(state, state.upper())}`", inline=True)
-    main.add_field(name="JOGADORES", value=f"`{players.get('count', 0)}{f' / {max_slots}' if max_slots else ''}`", inline=True)
+    main.add_field(name=t('JOGADORES'), value=f"`{players.get('count', 0)}{f' / {max_slots}' if max_slots else ''}`", inline=True)
     latency = ptero.get("latencyMs")
-    control = f"`{latency} ms`" if has_panel and latency is not None else "`Docker/VM`" if is_docker and ptero.get("ok") else "`indisponível`"
-    main.add_field(name="CONTROLE LOCAL" if is_docker else "PING DO PAINEL", value=control, inline=True)
+    control = f"`{latency} ms`" if has_panel and latency is not None else "`Docker/VM`" if is_docker and ptero.get("ok") else t('`indisponível`')
+    main.add_field(name=t('CONTROLE LOCAL') if is_docker else t('PING DO PAINEL'), value=control, inline=True)
     world = overview.get("world", {})
     world_lines = []
-    if world.get("gameDate"): world_lines.append(f"📅 **Dia:** {world['gameDate']}")
-    if world.get("timeOfDay"): world_lines.append(f"🕒 **Hora:** {world['timeOfDay']}")
-    if world.get("temperature"): world_lines.append(f"🌡️ **Temperatura:** {world['temperature']} °C")
-    if world_lines: main.add_field(name="MUNDO", value="\n".join(world_lines), inline=True)
-    infrastructure = [f"Painel {'🟢' if has_panel else '🔴'} · Docker {'🟢' if is_docker else '🟠'} · RCON {'🟢' if has_rcon else '🟠'}", f"Fonte: **{'RCON ao vivo' if players.get('source') == 'rcon' else 'FriendHost' if players.get('source') == 'csv' else 'sem leitura'}**"]
+    if world.get("gameDate"): world_lines.append(''.join((format(t('📅 **Dia:** '), ''), format(world['gameDate'], ''))))
+    if world.get("timeOfDay"): world_lines.append(''.join((format(t('🕒 **Hora:** '), ''), format(world['timeOfDay'], ''))))
+    if world.get("temperature"): world_lines.append(''.join((format(t('🌡️ **Temperatura:** '), ''), format(world['temperature'], ''), ' °C')))
+    if world_lines: main.add_field(name=t('MUNDO'), value="\n".join(world_lines), inline=True)
+    infrastructure = [''.join((format(t('Painel '), ''), format('🟢' if has_panel else '🔴', ''), ' · Docker ', format('🟢' if is_docker else '🟠', ''), ' · RCON ', format('🟢' if has_rcon else '🟠', ''))), ''.join((format(t('Fonte: **'), ''), format(t('RCON ao vivo') if players.get('source') == 'rcon' else 'FriendHost' if players.get('source') == 'csv' else t('sem leitura'), ''), '**'))]
     if uptime > 0: infrastructure.append(f"Uptime: **{_format_duration(uptime)}**")
-    if last_boot > 0: infrastructure.append(f"Último boot: <t:{last_boot}:R>")
-    main.add_field(name="INFRAESTRUTURA", value="\n".join(infrastructure), inline=True)
-    if connect_address: main.add_field(name="CONECTAR", value=f"`{connect_address}`", inline=False)
+    if last_boot > 0: infrastructure.append(''.join((format(t('Último boot: <t:'), ''), format(last_boot, ''), ':R>')))
+    main.add_field(name=t('INFRAESTRUTURA'), value="\n".join(infrastructure), inline=True)
+    if connect_address: main.add_field(name=t('CONECTAR'), value=f"`{connect_address}`", inline=False)
     if image := get_media_url(theme.get("banner")): main.set_image(url=image)
     if image := get_media_url(theme.get("thumbnail")): main.set_thumbnail(url=image)
-    main.set_footer(text="Monitoramento ao vivo · atualização silenciosa a cada 10 min")
+    main.set_footer(text=t('Monitoramento ao vivo · atualização silenciosa a cada 10 min'))
     main.timestamp = datetime.now(timezone.utc)
     profiles = online_profiles or []
     embeds = [main]
@@ -174,24 +181,24 @@ def build_server_panel(overview: dict, *, online_profiles: list[dict] | None = N
     if can_use_player_cards:
         for name in players["names"]:
             profile = next((item for item in profiles if item["nick"].casefold() == name.casefold()), {"nick": name})
-            details = [f"🛡️ {profile['faction']}" if profile.get("faction") else "", f"⏱️ online há {profile['onlineTime']}" if profile.get("onlineTime") else "", f"<@{profile['discordId']}>" if profile.get("discordId") else ""]
-            card = discord.Embed(description=" · ".join(item for item in details if item) or "Sobrevivente em atividade", color=secondary)
+            details = [f"🛡️ {profile['faction']}" if profile.get("faction") else "", ''.join((format(t('⏱️ online há '), ''), format(profile['onlineTime'], ''))) if profile.get("onlineTime") else "", f"<@{profile['discordId']}>" if profile.get("discordId") else ""]
+            card = discord.Embed(description=" · ".join(item for item in details if item) or t('Sobrevivente em atividade'), color=secondary)
             if profile.get("avatarUrl"):
                 card.set_author(name=name, icon_url=profile["avatarUrl"])
             else:
                 card.set_author(name=name)
             embeds.append(card)
     elif players.get("names"):
-        online = discord.Embed(title=f"👥 {players['count']} sobrevivente{'s' if players['count'] != 1 else ''} online", color=secondary)
+        online = discord.Embed(title=''.join(('👥 ', format(players['count'], ''), format(t(' sobrevivente'), ''), format('s' if players['count'] != 1 else '', ''), ' online')), color=secondary)
         lines = []
         for name in players["names"]:
             profile = next((item for item in profiles if item["nick"].casefold() == name.casefold()), {})
-            details = [f"🛡️ {profile['faction']}" if profile.get("faction") else "", f"⏱️ online há {profile['onlineTime']}" if profile.get("onlineTime") else "", f"<@{profile['discordId']}>" if profile.get("discordId") else ""]
+            details = [f"🛡️ {profile['faction']}" if profile.get("faction") else "", ''.join((format(t('⏱️ online há '), ''), format(profile['onlineTime'], ''))) if profile.get("onlineTime") else "", f"<@{profile['discordId']}>" if profile.get("discordId") else ""]
             lines.append(f"▸ **{name}**" + ("\n  " + " · ".join(item for item in details if item) if any(details) else ""))
         online.description = _limited_lines(lines)
         embeds.append(online)
     else:
-        embeds.append(discord.Embed(title="👥 0 sobreviventes online", description="A estrada está silenciosa. Nenhum sobrevivente conectado agora.", color=secondary))
+        embeds.append(discord.Embed(title=t('👥 0 sobreviventes online'), description=t('A estrada está silenciosa. Nenhum sobrevivente conectado agora.'), color=secondary))
     return embeds, get_theme_attachments(theme, "status")
 
 
@@ -202,20 +209,20 @@ def build_server_status_embed(overview: dict, footer_text: str = "") -> discord.
     has_docker = ptero.get("ok") and ptero.get("transport") == "docker"
     online = overview.get("isOnline", False)
     color = 0x2ECC71 if online and rcon_ok and has_panel else 0xF39C12 if online else 0xE74C3C
-    state = str(overview.get("currentState") or "Desconhecido").casefold()
-    state_label = {"running": "Online", "starting": "Iniciando", "stopping": "Desligando", "offline": "Offline"}.get(state, state.title())
+    state = str(overview.get("currentState") or t('Desconhecido')).casefold()
+    state_label = {"running": "Online", "starting": t('Iniciando'), "stopping": t('Desligando'), "offline": "Offline"}.get(state, state.title())
     players = overview.get("onlinePlayers", {})
-    source = {"rcon": "RCON ao vivo", "csv": "FriendHost", "none": "Sem leitura"}.get(players.get("source"), players.get("source", "Desconhecido"))
+    source = {"rcon": t('RCON ao vivo'), "csv": "FriendHost", "none": t('Sem leitura')}.get(players.get("source"), players.get("source", t('Desconhecido')))
     names = players.get("names", [])
     embed = discord.Embed(
-        title="📡 Painel do servidor",
-        description=(f"Servidor operacional. {players.get('count', 0)} sobrevivente(s) ativo(s)." if online else "Servidor indisponível ou em reinicialização."),
+        title=t('📡 Painel do servidor'),
+        description=(''.join((format(t('Servidor operacional. '), ''), format(players.get('count', 0), ''), format(t(' sobrevivente(s) ativo(s).'), ''))) if online else t('Servidor indisponível ou em reinicialização.')),
         color=color, timestamp=datetime.now(timezone.utc),
     )
-    embed.add_field(name="🖥️ Servidor", value=f"Estado\n`{state_label}`\n\nPainel\n`{'Conectado' if has_panel else 'Fallback Docker' if has_docker else 'Indisponível'}`\n\nRCON\n`{'Conectado' if rcon_ok else 'Indisponível'}`", inline=True)
+    embed.add_field(name=t('🖥️ Servidor'), value=''.join((format(t('Estado\n`'), ''), format(state_label, ''), format(t('`\n\nPainel\n`'), ''), format(t('Conectado') if has_panel else 'Fallback Docker' if has_docker else t('Indisponível'), ''), '`\n\nRCON\n`', format(t('Conectado') if rcon_ok else t('Indisponível'), ''), '`')), inline=True)
     world = overview.get("world", {})
-    embed.add_field(name="🌍 Mundo", value=f"Hora\n`{world.get('timeOfDay') or 'N/A'}`\n\nDia\n`{world.get('gameDate') or 'N/A'}`\n\nTemperatura\n`{world.get('temperature') + ' C' if world.get('temperature') else 'N/A'}`", inline=True)
-    embed.add_field(name="📶 Leitura", value=f"Players\n`{players.get('count', 0)}`\n\nLeitura\n`{source}`\n\nAtualização\n`60s`", inline=True)
-    embed.add_field(name="🧍 Sobreviventes online", value=_limited_lines([f"{index}. {name}" for index, name in enumerate(names, 1)], 1024) or "Nenhum sobrevivente online no momento.", inline=False)
+    embed.add_field(name=t('🌍 Mundo'), value=''.join((format(t('Hora\n`'), ''), format(world.get('timeOfDay') or 'N/A', ''), format(t('`\n\nDia\n`'), ''), format(world.get('gameDate') or 'N/A', ''), format(t('`\n\nTemperatura\n`'), ''), format(world.get('temperature') + ' C' if world.get('temperature') else 'N/A', ''), '`')), inline=True)
+    embed.add_field(name=t('📶 Leitura'), value=''.join(('Players\n`', format(players.get('count', 0), ''), format(t('`\n\nLeitura\n`'), ''), format(source, ''), format(t('`\n\nAtualização\n`60s`'), ''))), inline=True)
+    embed.add_field(name=t('🧍 Sobreviventes online'), value=_limited_lines([f"{index}. {name}" for index, name in enumerate(names, 1)], 1024) or t('Nenhum sobrevivente online no momento.'), inline=False)
     if footer_text: embed.set_footer(text=footer_text)
     return embed

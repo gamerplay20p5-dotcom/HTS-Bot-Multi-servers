@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 from .tenant_scope import getenv
 
 import asyncio
@@ -52,7 +54,7 @@ def _safehouse_rectangles(data: PzData) -> list[dict[str, Any]]:
         x2 = to_number(get_field(row, ["x2"]), x1)
         y2 = to_number(get_field(row, ["y2"]), y1)
         rectangles.append({
-            "title": get_field(row, ["title"], "Sem titulo"),
+            "title": get_field(row, ["title"], t('Sem titulo')),
             "minX": min(x1, x2), "minY": min(y1, y2),
             "maxX": max(x1, x2), "maxY": max(y1, y2),
         })
@@ -90,7 +92,7 @@ def _cell_names(x: int, y: int) -> list[str]:
 def _map_cells(target: str, data: PzData) -> tuple[str, list[tuple[int, int]]] | None:
     pair = parse_pair(target)
     if pair:
-        return f"celula {pair[0]},{pair[1]}", [pair]
+        return ''.join((format(t('celula '), ''), format(pair[0], ''), ',', format(pair[1], ''))), [pair]
     wanted = clean_text(target).casefold()
     map_entry = next((item for item in data.configured_maps() if item["id"].casefold() == wanted or item["name"].casefold() == wanted), None)
     if not map_entry:
@@ -150,7 +152,7 @@ async def build_wipe_plan(kind: str, target: str = "", *, force: bool = False, d
         save_root = _save_root()
         root = _cache_root(save_root)
         if not root:
-            return {"ok": False, "error": "PZ_CACHE_ROOT nao configurado e nao consegui derivar pelo PZ_SAVE_ROOT."}
+            return {"ok": False, "error": t('PZ_CACHE_ROOT nao configurado e nao consegui derivar pelo PZ_SAVE_ROOT.')}
         path = Path(root)
         storage = "local" if path.is_absolute() and path.exists() and path.is_dir() else "pterodactyl"
         desired = [
@@ -162,14 +164,14 @@ async def build_wipe_plan(kind: str, target: str = "", *, force: bool = False, d
             found for _, aliases in desired
             if (found := next((name for name in aliases if (path / name).exists()), ""))
         ] if storage == "local" else [entry[0] for entry in desired]
-        return {"ok": True, "root": root, "storage": storage, "kind": "global", "label": "wipe global DB/Logs/Saves", "force": True, "files": files, "allowDirectories": True, "skipped": [], "summary": {"directories": files}}
+        return {"ok": True, "root": root, "storage": storage, "kind": "global", "label": t('wipe global DB/Logs/Saves'), "force": True, "files": files, "allowDirectories": True, "skipped": [], "summary": {"directories": files}}
 
     root = _save_root()
     if not root:
-        return {"ok": False, "error": "PZ_SAVE_ROOT nao configurado no .env da VM."}
+        return {"ok": False, "error": t('PZ_SAVE_ROOT nao configurado no .env da VM.')}
     listing = await _save_files(root)
     if listing[0] is None:
-        return {"ok": False, "error": f"Falha ao listar save: {listing[1]}"}
+        return {"ok": False, "error": ''.join((format(t('Falha ao listar save: '), ''), format(listing[1], '')))}
     storage, entries = listing
     existing = {name for name, item in entries.items() if item.get("isFile")}
     requested: set[str] = set()
@@ -180,18 +182,18 @@ async def build_wipe_plan(kind: str, target: str = "", *, force: bool = False, d
 
     if kind == "zeds":
         if not clean_text(target) or clean_text(target).casefold() == "todos":
-            label = "todos os mapas"
+            label = t('todos os mapas')
             requested.update(name for name in existing if re.fullmatch(r"zpop_-?\d+_-?\d+\.bin", name, re.I))
         else:
             resolved = _map_cells(target, data)
             if not resolved:
-                return {"ok": False, "error": "Mapa/celula nao encontrado. Use /mapas ou informe x,y."}
+                return {"ok": False, "error": t('Mapa/celula nao encontrado. Use /mapas ou informe x,y.')}
             label, cells = resolved
             requested.update(f"zpop_{x}_{y}.bin" for x, y in cells)
     elif kind == "chunk":
         pair = parse_pair(target)
         if not pair:
-            return {"ok": False, "error": "Chunk invalido. Informe no formato x,y."}
+            return {"ok": False, "error": t('Chunk invalido. Informe no formato x,y.')}
         x, y = pair
         label = f"chunk {x},{y}"
         rectangle = _chunk_rect(x, y)
@@ -208,12 +210,12 @@ async def build_wipe_plan(kind: str, target: str = "", *, force: bool = False, d
     else:
         resolved = _map_cells(target, data)
         if not resolved:
-            return {"ok": False, "error": "Mapa/celula nao encontrado. Use /mapas ou informe x,y."}
+            return {"ok": False, "error": t('Mapa/celula nao encontrado. Use /mapas ou informe x,y.')}
         label, cells = resolved
         for x, y in cells:
             overlaps = [house["title"] for house in protected if _overlap(_cell_rect(x, y), house)]
             if overlaps and not force:
-                skipped.append({"target": f"celula {x},{y}", "safehouses": overlaps})
+                skipped.append({"target": ''.join((format(t('celula '), ''), format(x, ''), ',', format(y, ''))), "safehouses": overlaps})
                 continue
             requested.update(_cell_names(x, y))
         xs, ys = [cell[0] for cell in cells], [cell[1] for cell in cells]
@@ -233,31 +235,31 @@ async def build_wipe_plan(kind: str, target: str = "", *, force: bool = False, d
 
 def format_wipe_plan(plan: dict[str, Any], max_files: int = 30) -> str:
     if not plan.get("ok"):
-        return plan.get("error", "Plano de wipe invalido.")
+        return plan.get("error", t('Plano de wipe invalido.'))
     lines = [
-        f"Alvo: {plan['label']}", f"Raiz: {plan['root']}",
-        f"Modo: {'local/VM' if plan['storage'] == 'local' else 'Pterodactyl API'}",
-        f"Arquivos encontrados: {len(plan['files'])}",
+        ''.join((format(t('Alvo: '), ''), format(plan['label'], ''))), ''.join((format(t('Raiz: '), ''), format(plan['root'], ''))),
+        ''.join((format(t('Modo: '), ''), format('local/VM' if plan['storage'] == 'local' else 'Pterodactyl API', ''))),
+        ''.join((format(t('Arquivos encontrados: '), ''), format(len(plan['files']), ''))),
     ]
     if plan["kind"] == "global":
-        lines.append("Operacao: apaga as pastas db/Logs/Saves do cache do servidor.")
+        lines.append(t('Operacao: apaga as pastas db/Logs/Saves do cache do servidor.'))
     else:
-        lines.extend((f"Protecao de safehouse: {'IGNORADA (force)' if plan['force'] else 'ATIVA'}", f"Alvos protegidos ignorados: {len(plan['skipped'])}"))
+        lines.extend((''.join((format(t('Protecao de safehouse: '), ''), format(t('IGNORADA (force)') if plan['force'] else t('ATIVA'), ''))), ''.join((format(t('Alvos protegidos ignorados: '), ''), format(len(plan['skipped']), '')))))
     summary = plan.get("summary") or {}
     for key, label in (("cellStart", "Celulas"), ("chunkStart", "Chunks")):
         start, end = summary.get(key), summary.get("cellEnd" if key == "cellStart" else "chunkEnd")
         if start and end:
-            lines.append(f"{label}: {start['x']},{start['y']} ate {end['x']},{end['y']}")
+            lines.append(''.join((format(label, ''), ': ', format(start['x'], ''), ',', format(start['y'], ''), format(t(' ate '), ''), format(end['x'], ''), ',', format(end['y'], ''))))
     world = summary.get("world")
     if world:
-        lines.append(f"Coordenadas mundo: X {world['minX']}-{world['maxX']} | Y {world['minY']}-{world['maxY']}")
+        lines.append(''.join((format(t('Coordenadas mundo: X '), ''), format(world['minX'], ''), '-', format(world['maxX'], ''), ' | Y ', format(world['minY'], ''), '-', format(world['maxY'], ''))))
     if summary.get("directories"):
-        lines.append("Pastas alvo: " + ", ".join(summary["directories"]))
+        lines.append(t('Pastas alvo: ') + ", ".join(summary["directories"]))
     lines.extend(f"- {item['target']}: {', '.join(item['safehouses'])}" for item in plan.get("skipped", [])[:10])
     if plan["files"]:
-        lines.extend(("", "Amostra de arquivos:", *(f"- {name}" for name in plan["files"][:max_files])))
+        lines.extend(("", t('Amostra de arquivos:'), *(f"- {name}" for name in plan["files"][:max_files])))
         if len(plan["files"]) > max_files:
-            lines.append(f"... e mais {len(plan['files']) - max_files}")
+            lines.append(''.join((format(t('... e mais '), ''), format(len(plan['files']) - max_files, ''))))
     return "\n".join(lines)
 
 
@@ -278,9 +280,9 @@ async def _wait_for_backup(client: PterodactylClient, backup_uuid: str) -> dict[
             return {"ok": False, "error": extract_ptero_error(result)}
         backup = result.get("backup", {})
         if backup.get("completedAt"):
-            return {"ok": bool(backup.get("isSuccessful")), "backup": backup, "error": "O backup pre-wipe terminou com falha."}
+            return {"ok": bool(backup.get("isSuccessful")), "backup": backup, "error": t('O backup pre-wipe terminou com falha.')}
         await asyncio.sleep(10)
-    return {"ok": False, "error": "Tempo limite aguardando o backup pre-wipe."}
+    return {"ok": False, "error": t('Tempo limite aguardando o backup pre-wipe.')}
 
 
 def _local_backup(plan: dict[str, Any]) -> dict[str, Any]:
@@ -295,16 +297,16 @@ def _local_backup(plan: dict[str, Any]) -> dict[str, Any]:
             for name in plan["files"]:
                 relative = _safe_relative(name)
                 if relative is None:
-                    return {"ok": False, "error": f"Nome de arquivo inseguro no plano: {name}"}
+                    return {"ok": False, "error": ''.join((format(t('Nome de arquivo inseguro no plano: '), ''), format(name, '')))}
                 source = (root / Path(*relative.parts)).resolve()
                 if source != root and root not in source.parents:
-                    return {"ok": False, "error": f"Arquivo fora da raiz de save: {name}"}
+                    return {"ok": False, "error": ''.join((format(t('Arquivo fora da raiz de save: '), ''), format(name, '')))}
                 if source.exists():
                     tar.add(source, arcname=relative.as_posix(), recursive=bool(plan.get("allowDirectories")))
         os.chmod(archive, 0o600)
     except (OSError, tarfile.TarError) as exc:
         archive.unlink(missing_ok=True)
-        return {"ok": False, "error": f"Falha ao criar backup local: {exc}"}
+        return {"ok": False, "error": ''.join((format(t('Falha ao criar backup local: '), ''), format(exc, '')))}
     return {"ok": True, "backup": {"uuid": f"local:{archive.name}", "name": archive.name, "completedAt": datetime.now(timezone.utc).isoformat(), "isSuccessful": True, "archivePath": str(archive)}}
 
 
@@ -325,7 +327,7 @@ async def _pre_wipe_backup(plan: dict[str, Any]) -> dict[str, Any]:
                     return complete
     if plan["storage"] == "local":
         return await asyncio.to_thread(_local_backup, plan)
-    return {"ok": False, "error": f"Falha ao iniciar backup pre-wipe: {extract_ptero_error(result)}"}
+    return {"ok": False, "error": ''.join((format(t('Falha ao iniciar backup pre-wipe: '), ''), format(extract_ptero_error(result), '')))}
 
 
 async def execute_wipe_plan(plan: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
@@ -334,7 +336,7 @@ async def execute_wipe_plan(plan: dict[str, Any], *, dry_run: bool = False) -> d
     if dry_run:
         return {"ok": True, "dryRun": True, "plan": plan}
     if not plan["files"]:
-        return {"ok": False, "error": "Nenhum arquivo correspondente foi encontrado; nada foi apagado.", "plan": plan}
+        return {"ok": False, "error": t('Nenhum arquivo correspondente foi encontrado; nada foi apagado.'), "plan": plan}
     from .server_integrations import fetch_server_resources
     from .server_registry import ServerRegistry
 
@@ -342,33 +344,33 @@ async def execute_wipe_plan(plan: dict[str, Any], *, dry_run: bool = False) -> d
     resources = await fetch_server_resources(server)
     if not resources["ok"]:
         from .server_integrations import describe_server_error
-        return {"ok": False, "error": f"Nao foi possivel confirmar o estado do servidor: {describe_server_error(resources)}"}
+        return {"ok": False, "error": ''.join((format(t('Nao foi possivel confirmar o estado do servidor: '), ''), format(describe_server_error(resources), '')))}
     if clean_text(resources.get("state")).casefold() != "offline":
-        return {"ok": False, "error": f"Servidor precisa estar offline para wipe. Estado atual: {resources.get('state')}."}
+        return {"ok": False, "error": ''.join((format(t('Servidor precisa estar offline para wipe. Estado atual: '), ''), format(resources.get('state'), ''), '.'))}
     backup = await _pre_wipe_backup(plan)
     if not backup.get("ok"):
-        return {"ok": False, "error": backup.get("error", "Backup pre-wipe falhou."), "backup": backup.get("backup")}
+        return {"ok": False, "error": backup.get("error", t('Backup pre-wipe falhou.')), "backup": backup.get("backup")}
     if plan["storage"] == "local":
         root = Path(plan["root"]).resolve()
         deleted = []
         for name in plan["files"]:
             relative = _safe_relative(name)
             if relative is None:
-                return {"ok": False, "error": f"Arquivo inseguro no plano: {name}", "deleted": deleted, "backup": backup["backup"]}
+                return {"ok": False, "error": ''.join((format(t('Arquivo inseguro no plano: '), ''), format(name, ''))), "deleted": deleted, "backup": backup["backup"]}
             target = (root / Path(*relative.parts)).resolve()
             if target != root and root not in target.parents:
-                return {"ok": False, "error": f"Arquivo fora da raiz de save: {name}", "deleted": deleted, "backup": backup["backup"]}
+                return {"ok": False, "error": ''.join((format(t('Arquivo fora da raiz de save: '), ''), format(name, ''))), "deleted": deleted, "backup": backup["backup"]}
             try:
                 if target.is_dir():
                     if not plan.get("allowDirectories"):
-                        return {"ok": False, "error": f"Diretorio nao permitido no plano: {name}", "deleted": deleted, "backup": backup["backup"]}
+                        return {"ok": False, "error": ''.join((format(t('Diretorio nao permitido no plano: '), ''), format(name, ''))), "deleted": deleted, "backup": backup["backup"]}
                     import shutil
                     shutil.rmtree(target)
                 else:
                     target.unlink(missing_ok=True)
                 deleted.append(name)
             except OSError as exc:
-                return {"ok": False, "error": f"Falha ao apagar {name}: {exc}", "deleted": deleted, "backup": backup["backup"]}
+                return {"ok": False, "error": ''.join((format(t('Falha ao apagar '), ''), format(name, ''), ': ', format(exc, ''))), "deleted": deleted, "backup": backup["backup"]}
         return {"ok": True, "plan": plan, "deleted": deleted, "backup": backup["backup"]}
     deleted = []
     async with PterodactylClient(server) as client:
@@ -376,6 +378,6 @@ async def execute_wipe_plan(plan: dict[str, Any], *, dry_run: bool = False) -> d
             batch = plan["files"][index:index + 100]
             result = await client.delete_files(plan["root"], batch)
             if not result["ok"]:
-                return {"ok": False, "error": f"Falha ao apagar lote: {extract_ptero_error(result)}", "deleted": deleted, "backup": backup["backup"]}
+                return {"ok": False, "error": ''.join((format(t('Falha ao apagar lote: '), ''), format(extract_ptero_error(result), ''))), "deleted": deleted, "backup": backup["backup"]}
             deleted.extend(batch)
     return {"ok": True, "plan": plan, "deleted": deleted, "backup": backup["backup"]}

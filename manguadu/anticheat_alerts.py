@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 from .tenant_scope import getenv, scoped_guilds, current_scope, allowed_path
 
 import csv
@@ -81,7 +83,7 @@ def alert_key(alert: dict) -> str:
 
 
 def group_alert_key(alert: dict) -> str:
-    player = clean_text(alert.get("steamId") or alert.get("username") or "desconhecido").casefold()
+    player = clean_text(alert.get("steamId") or alert.get("username") or t('desconhecido')).casefold()
     cheat = clean_text(alert.get("cheat") or "alerta").casefold()
     return f"{player}|{cheat}"
 
@@ -133,12 +135,12 @@ def build_alert_embed(groups: list[dict], omitted_count: int = 0) -> discord.Emb
         alert = group["alert"]
         source_count = max(0, to_number(alert.get("count")))
         repetitions = max(group["count"], source_count)
-        line = f"**{(alert.get('username') or 'Jogador desconhecido')[:80]}** · `{(alert.get('cheat') or 'alerta')[:50]}`"
-        metadata = [f"{repetitions} ocorrências" if repetitions > 1 else "", f"pos. {alert['pos'][:60]}" if alert.get("pos") else ""]
+        line = ''.join(('**', format((alert.get('username') or t('Jogador desconhecido'))[:80], ''), '** · `', format((alert.get('cheat') or 'alerta')[:50], ''), '`'))
+        metadata = [''.join((format(repetitions, ''), format(t(' ocorrências'), ''))) if repetitions > 1 else "", f"pos. {alert['pos'][:60]}" if alert.get("pos") else ""]
         lines.append("\n".join([line, " · ".join(item for item in metadata if item), alert.get("detail", "")[:180]]).strip())
-    if omitted_count > 0: lines.append(f"*+ {omitted_count} detecções agrupadas nesta varredura.*")
-    embed = discord.Embed(title="Alerta anticheat", description="\n\n".join(lines)[:4096], color=0xD63C3C, timestamp=datetime.now(timezone.utc))
-    embed.set_footer(text=f"{len(groups) + omitted_count} detecção(ões) nova(s)")
+    if omitted_count > 0: lines.append(''.join(('*+ ', format(omitted_count, ''), format(t(' detecções agrupadas nesta varredura.*'), ''))))
+    embed = discord.Embed(title=t('Alerta anticheat'), description="\n\n".join(lines)[:4096], color=0xD63C3C, timestamp=datetime.now(timezone.utc))
+    embed.set_footer(text=''.join((format(len(groups) + omitted_count, ''), format(t(' detecção(ões) nova(s)'), ''))))
     return embed
 
 

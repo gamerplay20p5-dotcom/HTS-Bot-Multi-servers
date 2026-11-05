@@ -1,6 +1,8 @@
 """A server's local files and state, resolved only inside its verified Wings volume."""
 from __future__ import annotations
 
+from .i18n import t
+
 import os
 import re
 import asyncio
@@ -15,11 +17,11 @@ def normalize_binding(identifier: str, volume_uuid: str, label: str, lua_path: s
     volume_uuid = str(UUID(volume_uuid.strip()))
     identifier = identifier.strip().lower()
     if identifier not in {volume_uuid, volume_uuid[:8]}:
-        raise ValueError("O identificador Pterodactyl deve corresponder ao UUID informado (UUID completo ou primeiros 8 caracteres).")
+        raise ValueError(t('O identificador Pterodactyl deve corresponder ao UUID informado (UUID completo ou primeiros 8 caracteres).'))
     relative = PurePosixPath(lua_path.strip().replace("\\", "/") or ".cache/Lua")
     if relative.is_absolute() or ".." in relative.parts or ":" in str(relative):
-        raise ValueError("Informe uma pasta Lua relativa ao volume, como .cache/Lua; caminhos externos nao sao aceitos.")
-    return {"identifier": volume_uuid[:8], "uuid": volume_uuid, "label": label.strip()[:100] or "Servidor PZ",
+        raise ValueError(t('Informe uma pasta Lua relativa ao volume, como .cache/Lua; caminhos externos nao sao aceitos.'))
+    return {"identifier": volume_uuid[:8], "uuid": volume_uuid, "label": label.strip()[:100] or t('Servidor PZ'),
             "lua": str(relative), "connect_address": address.strip()[:150]}
 
 def resolve_volume(binding: dict) -> tuple[Path, Path]:
@@ -28,9 +30,12 @@ def resolve_volume(binding: dict) -> tuple[Path, Path]:
     volume = expected.resolve()
     lua = (volume / binding["lua"]).resolve()
     if volume != expected or not volume.is_relative_to(root) or not lua.is_relative_to(volume):
-        raise ValueError("O volume ou a pasta Lua apontam para fora da raiz Wings autorizada.")
+        raise ValueError(t('O volume ou a pasta Lua apontam para fora da raiz Wings autorizada.'))
     if not volume.is_dir() or not lua.is_dir():
-        raise ValueError("Volume/Pasta Lua indisponivel neste dedicado. Monte o volume Wings na raiz configurada e confira a permissao de leitura do bot.")
+        raise ValueError(t('Volume/Pasta Lua indisponivel neste dedicado. Monte o volume Wings na raiz configurada e confira a permissao de leitura do bot.'))
+    from .stats.discovery import safe_child
+    if not safe_child(volume, volume / binding["lua"], enforce_scope=False):
+        raise ValueError(t('Volume Wings inseguro: caminho externo ou link simbólico.'))
     return volume, lua
 
 def build_scope(guild_id: int, binding: dict) -> GuildScope:
@@ -39,17 +44,17 @@ def build_scope(guild_id: int, binding: dict) -> GuildScope:
     data = next((path for path in (lua / "FriendHost_Data", lua) if (path / "Jogadores").is_dir()), lua / "FriendHost_Data")
     for path in (data, data / "Jogadores", data / "Servidor", cache / "Logs", cache / "Server", cache / "Saves"):
         if not path.resolve().is_relative_to(volume):
-            raise ValueError("Uma pasta do servidor aponta para fora do volume Wings autorizado.")
+            raise ValueError(t('Uma pasta do servidor aponta para fora do volume Wings autorizado.'))
     settings: dict[str, str] = {}
     config_name = binding.get("pz_config", "")
     ini_files = list(islice((cache / "Server").glob("*.ini"), 50))
     if config_name:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", config_name) or ".." in config_name:
-            raise ValueError("Nome do INI invalido.")
+            raise ValueError(t('Nome do INI invalido.'))
         ini_files = [cache / "Server" / (config_name if config_name.endswith(".ini") else config_name + ".ini")]
     if len(ini_files) == 1 and ini_files[0].resolve().is_relative_to(volume):
         if ini_files[0].stat().st_size > 1024 * 1024:
-            raise ValueError("INI do servidor excede 1 MiB; revise o arquivo antes de cadastrar.")
+            raise ValueError(t('INI do servidor excede 1 MiB; revise o arquivo antes de cadastrar.'))
         # PZ already stores these credentials. Read only this volume; never copy
         # RCON passwords into Discord settings, messages or registry files.
         with ini_files[0].open(encoding="utf-8-sig", errors="replace") as stream:
@@ -61,6 +66,7 @@ def build_scope(guild_id: int, binding: dict) -> GuildScope:
     saves = [path for path in saves if path.is_dir() and path.resolve().is_relative_to(volume)]
     state_root = Path(__file__).resolve().parent.parent / "data" / "guilds" / str(guild_id)
     env = {
+        "STATS_PROVIDER": binding.get("stats_provider", "auto"),
         "PTERO_SERVER_ID": binding["identifier"], "PTERO_VOLUME_ID": binding["uuid"],
         "PTERO_SERVER_UUID": binding["uuid"], "PTERO_DOCKER_CONTAINER": binding["uuid"],
         "CSV_BASE_PATH": str(data), "PZ_LUA_PATH": str(lua), "PZ_CACHE_ROOT": str(cache),
@@ -110,6 +116,7 @@ class GuildRuntime:
         self.online_since: dict[str, float] = {}
         with use_scope(self.scope):
             self.data = PzData(self.scope.environment["CSV_BASE_PATH"], death_state_path=tenant_path("death-counts.json"))
+            self.data.stats_source(force=True)
             self.automations = AutomationScheduler(path=tenant_path("automations.json"), server_provider=lambda: self.scope.server)
             self.anticheat = AntiCheatMonitor(state_path=tenant_path("anticheat-alerts-state.json"), registry=ServerRegistry())
             self.watcher = FriendHostWatcher(bot)

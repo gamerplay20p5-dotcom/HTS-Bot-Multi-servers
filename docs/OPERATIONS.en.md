@@ -8,6 +8,8 @@ HTS Bot Multi servers is a Python Discord bot for managing multiple Project Zomb
 
 The public product is **HTS Bot Multi servers**, the Python distribution is `hts-bot-multi-servers`, and the Python module remains `manguadu`. Start it with `python -m manguadu --bot`. The FriendHost mod retains its own name. Changing the Discord application's visible name requires the owner to edit it in the Developer Portal.
 
+The new `/config` server picker discovers Pterodactyl ID/UUID and local Lua folders by name. Automatic proof-file linking requires an explicit independent grant from the Discord application owner; guild administrators see only their permitted servers. Integration diagnostics and native TTF Stats MP account/character rankings share the existing isolated queues. Read the [PT/EN setup, security and statistics guide](SERVER_SETUP.pt-en.md) for the complete workflow, provider semantics, limits and the unpublished development branch.
+
 ## Installation
 
 Requirements: Python 3.11+, a Discord bot token, a Pterodactyl Client API key with access to the managed servers, and readable local Wings volumes. PM2 is optional process supervision. `ffmpeg` is optional for video thumbnails.
@@ -54,11 +56,16 @@ This release needs local or mounted Wings volumes. Remote Wings hosts must mount
 
 ## Features and command reference
 
-Command names and Discord interface labels remain Portuguese. The tables explain their behavior in English. Permissions and required parameters are shown by Discord's slash-command interface.
+Run `/language`, or select **Idioma / Language** inside `/config` or `/config_bot`, to choose **English** for this community. The preference is saved per guild and survives restarts; Portuguese is the default for existing installations. New messages, forms, scheduled reports and Gemini analysis use the community language. Panels update on the next scheduled refresh; the published ticket panel is refreshed when possible. Historical messages and forms already open are not rewritten.
+
+Discord localizes slash-command names/descriptions/options/parameters according to each user's **Discord application language**, independently of the guild's message preference. For an English Discord client, `/painel jogadores vincular` appears as `/panel players link`, `/servidor` as `/server`, `/automacao` as `/automation`, `/config_kick_automatico` as `/config_auto_kick`, and `/wl puxar_lore` as `/wl download_lore`. The following table retains canonical Portuguese paths so both versions can be identified. Permissions and required parameters are displayed in Discord.
+
+Player/server/faction names, submitted lore, raw game logs/output and custom theme content remain intact. Interface translations come from the bundled offline catalog `manguadu/locales/en.json`, with no per-message API requests. Gemini is instructed to write human-readable results in the selected language. Confirmation tokens such as `APAGAR`, `EXPULSAR` and `RESTAURAR` retain their literal values; translated instructions tell administrators exactly what to enter.
 
 | Commands | Behavior |
 |---|---|
 | `/config`, `/condig` | Bind the PZ server, configure published RCON endpoint, inspect log backlog. |
+| `/language` | Choose Portuguese or English for this community; administrator-only and available before binding. |
 | `/config_bot` | Configure channels, staff role, private tickets, whitelist rules and voice enforcement. |
 | `/config_api` | Store/test a per-guild encrypted Gemini API key through a private interface. |
 | `/config_lore` | Import official server lore as UTF-8 `.txt`. |

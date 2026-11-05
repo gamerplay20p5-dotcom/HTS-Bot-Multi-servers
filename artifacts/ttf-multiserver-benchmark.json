@@ -1,0 +1,10 @@
+{
+  "servers": 25,
+  "accounts_per_server": 100,
+  "characters_per_account": 2,
+  "concurrent_scans": 3,
+  "first_scan_seconds": 23.8,
+  "metadata_cached_scan_seconds": 5.251,
+  "python_heap_peak_mib": 13.41,
+  "scope": "Synthetic Windows local TTF reads and Discord embed construction; excludes network, total process RSS and production load."
+}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t, language
+
 import asyncio
 import json
 from typing import Any
@@ -47,9 +49,11 @@ class GeminiError(RuntimeError):
 
 async def _generate(api_key: str, user_content: str) -> dict[str, Any]:
     if not api_key.strip():
-        raise GeminiError("A chave Gemini nao esta configurada.")
+        raise GeminiError(t('A chave Gemini nao esta configurada.'))
     payload = {
-        "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTIONS}]},
+        "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTIONS.replace(
+            "Responda em portugues do Brasil", "Write every human-readable JSON field in English" if language() == "en" else "Responda em portugues do Brasil"
+        )}]},
         "contents": [{"role": "user", "parts": [{"text": user_content}]}],
         "generationConfig": {
             "temperature": 0.1,
@@ -68,22 +72,22 @@ async def _generate(api_key: str, user_content: str) -> dict[str, Any]:
             ) as response:
                 if response.status < 200 or response.status >= 300:
                     messages = {
-                        400: "O Gemini recusou a solicitacao. Confira o modelo e o projeto da chave.",
-                        403: "A chave Gemini nao tem acesso a este projeto ou modelo.",
-                        404: "O modelo Gemini configurado nao foi encontrado.",
-                        429: "A cota gratuita do Gemini foi atingida ou esta temporariamente limitada.",
+                        400: t('O Gemini recusou a solicitacao. Confira o modelo e o projeto da chave.'),
+                        403: t('A chave Gemini nao tem acesso a este projeto ou modelo.'),
+                        404: t('O modelo Gemini configurado nao foi encontrado.'),
+                        429: t('A cota gratuita do Gemini foi atingida ou esta temporariamente limitada.'),
                     }
-                    raise GeminiError(messages.get(response.status, f"Gemini respondeu HTTP {response.status}."))
+                    raise GeminiError(messages.get(response.status, ''.join((format(t('Gemini respondeu HTTP '), ''), format(response.status, ''), '.'))))
                 data = await response.json(content_type=None)
     except (aiohttp.ClientError, TimeoutError) as exc:
-        raise GeminiError("Nao foi possivel conectar ao Gemini. Tente novamente mais tarde.") from exc
+        raise GeminiError(t('Nao foi possivel conectar ao Gemini. Tente novamente mais tarde.')) from exc
     try:
         text = data["candidates"][0]["content"]["parts"][0]["text"]
         parsed = json.loads(text)
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise GeminiError("O Gemini nao retornou uma avaliacao estruturada valida.") from exc
+        raise GeminiError(t('O Gemini nao retornou uma avaliacao estruturada valida.')) from exc
     if not isinstance(parsed, dict):
-        raise GeminiError("O Gemini retornou um formato de avaliacao invalido.")
+        raise GeminiError(t('O Gemini retornou um formato de avaliacao invalido.'))
     return parsed
 
 
@@ -117,19 +121,19 @@ async def evaluate_lore_with_gemini(api_key: str, reference: str, submission: st
     summary = str(result.get("summary", ""))[:900].strip()
     reason = str(result.get("reason", ""))[:1000].strip()
     if decision not in {"approve", "review", "reject"}:
-        reason = "Resposta do Gemini sem decisao reconhecida; revisar manualmente."
+        reason = t('Resposta do Gemini sem decisao reconhecida; revisar manualmente.')
         decision = "review"
     if decision == "approve" and (confidence < 0.82 or contradictions):
-        reason = "O Gemini indicou coerencia, mas a confianca ou as contradicoes exigem revisao. " + reason
+        reason = t('O Gemini indicou coerencia, mas a confianca ou as contradicoes exigem revisao. ') + reason
         decision = "review"
     if decision == "reject" and (confidence < 0.82 or not contradictions):
-        reason = "Ha possivel incompatibilidade, mas faltam confianca ou evidencia direta para uma conclusao automatica. " + reason
+        reason = t('Ha possivel incompatibilidade, mas faltam confianca ou evidencia direta para uma conclusao automatica. ') + reason
         decision = "review"
     return LoreResult(
         approved=decision == "approve",
         score=round(confidence, 3),
         common_terms=coherences,
-        reason=reason or "A avaliacao precisa de revisao humana.",
+        reason=reason or t('A avaliacao precisa de revisao humana.'),
         summary=summary,
         contradictions=contradictions,
         source="gemini",
@@ -149,4 +153,4 @@ async def test_gemini_key(api_key: str) -> None:
         "Teste de conexao. Retorne decision=review, confidence=1, summary='teste', reason='chave valida', coherences=[], contradictions=[]; nao avalie nenhuma lore.",
     )
     if not result.get("decision"):
-        raise GeminiError("O Gemini respondeu sem conteudo.")
+        raise GeminiError(t('O Gemini respondeu sem conteudo.'))

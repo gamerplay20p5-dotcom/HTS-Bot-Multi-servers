@@ -4,7 +4,7 @@ O bot é executado integralmente em Python. O PM2 atua como supervisor do proces
 
 ## Instância compartilhada no dedicado
 
-Use um processo Python para todos os Discords. A chave `PTERO_API_KEY` e a URL `PTERO_URL` ficam no `.env` do dedicado; cada administrador cadastra somente o seu ID/UUID no `/config`. O bot valida o acesso àquele servidor com um código em `friendhost-discord-link.txt` na raiz do volume e verifica se o UUID retornado pela API corresponde ao volume informado. Um UUID não pode ser cadastrado por dois Discords.
+Use um processo Python para todos os Discords. A chave `PTERO_API_KEY` e a URL `PTERO_URL` ficam no `.env` do dedicado. `/config` oferece busca por nome, ID/UUID automáticos, descoberta de Lua e diagnóstico. O proprietário do aplicativo precisa autorizar o mapeamento guild/UUID antes de o bot criar `friendhost-discord-link.txt` pela API. Administradores comuns não veem o catálogo de outros clientes. A validação manual por arquivo continua disponível; um UUID não pode ser cadastrado por dois Discords. Veja [configuração e segurança PT/EN](docs/SERVER_SETUP.pt-en.md), incluindo TTF Stats MP, limites, recuperação e atualização da branch de desenvolvimento.
 
 `PTERO_VOLUMES_ROOT=/var/lib/pterodactyl/volumes` define a raiz de leitura local. A conta Linux do bot precisa acessar os volumes cadastrados. Se houver Wings em outra máquina, monte esses volumes nessa raiz; leitura remota contínua de logs pela API não é implementada. A pasta Lua do formulário é relativa a cada volume. Não use o `.env` para alternar UUIDs enquanto o processo roda.
 

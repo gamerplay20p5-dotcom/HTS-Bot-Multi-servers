@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import json
 import asyncio
 import time
@@ -17,7 +19,7 @@ from .tenant_scope import current_scope
 
 def extract_ptero_error(result: dict[str, Any] | None) -> str:
     if not result:
-        return "Falha desconhecida."
+        return t('Falha desconhecida.')
     if result.get("error"):
         return str(result["error"])
     payload = result.get("json") or {}
@@ -26,7 +28,7 @@ def extract_ptero_error(result: dict[str, Any] | None) -> str:
         detail = errors[0].get("detail") if isinstance(errors[0], dict) else None
         if detail:
             return str(detail)
-    return clean_text(result.get("text")) or f"HTTP {result.get('status', 'desconhecido')}"
+    return clean_text(result.get("text")) or ''.join(('HTTP ', format(result.get('status', t('desconhecido')), '')))
 
 
 class PterodactylClient:
@@ -51,21 +53,25 @@ class PterodactylClient:
             await self._session.close()
             self._session = None
 
-    def build_url(self, endpoint: str) -> str | None:
+    def build_url(self, endpoint: str, *, client_root: bool = False) -> str | None:
         ptero = self.server.get("ptero", {})
         base = clean_text(ptero.get("url")).rstrip("/")
         server_id = clean_text(ptero.get("serverId"))
-        if not base or not server_id:
+        if not base or (not client_root and not server_id):
             return None
+        if client_root:
+            return f"{base}/api/client" + (f"/{endpoint}" if endpoint and not endpoint.startswith("?") else endpoint)
         return f"{base}/api/client/servers/{quote(server_id, safe='')}" + (f"/{endpoint}" if endpoint else "")
 
     async def request(
         self, endpoint: str, *, method: str = "GET", body: dict[str, Any] | None = None,
-        raw_body: str | None = None, timeout: float = 15,
+        raw_body: str | None = None, timeout: float = 15, client_root: bool = False,
     ) -> dict[str, Any]:
         missing = describe_missing_config(self.server)
+        if client_root:
+            missing = [item for item in missing if item != "ptero.serverId"]
         if missing:
-            return {"ok": False, "error": f"Configuracao do Pterodactyl incompleta: {', '.join(missing)}."}
+            return {"ok": False, "error": ''.join((format(t('Configuracao do Pterodactyl incompleta: '), ''), format(', '.join(missing), ''), '.'))}
         if self._session is None:
             raise RuntimeError("Use 'async with PterodactylClient(server)' para abrir a sessao HTTP.")
         headers = {
@@ -86,7 +92,7 @@ class PterodactylClient:
                 if delay > 0:
                     await asyncio.sleep(min(60, delay))
             async with self._limiter, self._session.request(
-                method, self.build_url(endpoint), headers=headers, data=data,
+                method, self.build_url(endpoint, client_root=client_root), headers=headers, data=data,
                 timeout=aiohttp.ClientTimeout(total=timeout), allow_redirects=False,
             ) as response:
                 # API responses and log exports must not grow process memory without bounds.
@@ -94,7 +100,7 @@ class PterodactylClient:
                 async for chunk in response.content.iter_chunked(65536):
                     chunks.extend(chunk)
                     if len(chunks) > 8 * 1024 * 1024:
-                        return {"ok": False, "status": response.status, "error": "Resposta da API excedeu 8 MiB; use leitura local do volume para arquivos grandes."}
+                        return {"ok": False, "status": response.status, "error": t('Resposta da API excedeu 8 MiB; use leitura local do volume para arquivos grandes.')}
                 content = chunks.decode("utf-8", errors="replace")
                 if response.status == 429 and self._bot is not None:
                     try:
@@ -110,6 +116,45 @@ class PterodactylClient:
                         "retryAfter": response.headers.get("Retry-After") if response.status == 429 else None}
         except (aiohttp.ClientError, TimeoutError) as exc:
             return {"ok": False, "error": str(exc)}
+
+    async def list_servers(self, *, page: int = 1, search: str = "") -> dict[str, Any]:
+        """Client's accessible servers only. Never request admin/admin-all."""
+        from urllib.parse import urlencode
+        query = {"page": max(1, int(page)), "per_page": 25}
+        if search.strip():
+            query["filter[name]"] = search.strip()[:100]
+        result = await self.request("?" + urlencode(query), client_root=True)
+        if not result["ok"]:
+            return result
+        payload = result.get("json") or {}
+        servers = []
+        for item in payload.get("data", [])[:25]:
+            try:
+                servers.append(self.server_summary(item))
+            except (ValueError, KeyError, TypeError):
+                continue
+        pagination = (payload.get("meta") or {}).get("pagination") or {}
+        return {"ok": True, "servers": servers, "page": int(pagination.get("current_page", page)),
+                "pages": max(1, int(pagination.get("total_pages", 1)))}
+
+    @staticmethod
+    def server_summary(item):
+        from uuid import UUID
+        import re
+        attributes = item.get("attributes", item)
+        uuid = str(UUID(attributes["uuid"]))
+        identifier = str(attributes["identifier"])
+        if not re.fullmatch(r"[A-Za-z0-9_-]{8,36}", identifier):
+            raise ValueError("invalid API identifier")
+        relationships = attributes.get("relationships") or {}
+        allocations = []
+        for allocation in (relationships.get("allocations") or {}).get("data", [])[:32]:
+            data = allocation.get("attributes", {})
+            allocations.append({key: data[key] for key in ("ip", "ip_alias", "port", "is_default") if key in data})
+        # Deliberate allowlist: API invocation/variables may contain secrets.
+        return {"uuid": uuid, "identifier": identifier, "label": str(attributes.get("name") or identifier)[:100],
+                "description": str(attributes.get("description") or "")[:500], "node": str(attributes.get("node") or "")[:100],
+                "status": attributes.get("status"), "suspended": attributes.get("is_suspended") is True, "allocations": allocations}
 
     async def list_files(self, directory: str = "/") -> dict[str, Any]:
         result = await self.request(f"files/list?directory={quote(directory or '/', safe='')}")
@@ -131,12 +176,12 @@ class PterodactylClient:
 
     async def read_file(self, file_path: str) -> dict[str, Any]:
         if not clean_text(file_path):
-            return {"ok": False, "error": "Caminho do arquivo ausente."}
+            return {"ok": False, "error": t('Caminho do arquivo ausente.')}
         return await self.request(f"files/contents?file={quote(file_path, safe='')}")
 
     async def write_file(self, file_path: str, content: str) -> dict[str, Any]:
         if not clean_text(file_path):
-            return {"ok": False, "error": "Caminho do arquivo ausente."}
+            return {"ok": False, "error": t('Caminho do arquivo ausente.')}
         return await self.request(f"files/write?file={quote(file_path, safe='')}", method="POST", raw_body=content, timeout=60)
 
     async def delete_files(self, root: str, files: list[str]) -> dict[str, Any]:
@@ -151,16 +196,16 @@ class PterodactylClient:
         if not result["ok"]:
             return result
         attributes = (result.get("json") or {}).get("attributes") or result.get("json") or {}
-        return {**result, "state": clean_text(attributes.get("current_state") or attributes.get("state") or "desconhecido"), "resources": attributes.get("resources") or {}}
+        return {**result, "state": clean_text(attributes.get("current_state") or attributes.get("state") or t('desconhecido')), "resources": attributes.get("resources") or {}}
 
     async def power(self, action: str) -> dict[str, Any]:
         if action not in {"start", "stop", "restart", "kill"}:
-            return {"ok": False, "error": "Acao de energia invalida."}
+            return {"ok": False, "error": t('Acao de energia invalida.')}
         return await self.request("power", method="POST", body={"signal": action})
 
     async def command(self, command: str) -> dict[str, Any]:
         if not clean_text(command):
-            return {"ok": False, "error": "Comando vazio."}
+            return {"ok": False, "error": t('Comando vazio.')}
         return await self.request("command", method="POST", body={"command": command})
 
     async def list_backups(self) -> dict[str, Any]:

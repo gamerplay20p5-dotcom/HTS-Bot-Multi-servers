@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 from .tenant_scope import getenv, scoped_guilds, current_scope, allowed_path
 
 import asyncio
@@ -112,9 +114,9 @@ class FriendHostWatcher:
                 if key in IGNORED_PERKS: continue
                 old_level, new_level = to_number(previous.get(key)), to_number(value)
                 if new_level > old_level:
-                    label = PERK_LABELS.get(key, key)
+                    label = t(PERK_LABELS.get(key, key))
                     emoji = PERK_EMOJIS.get(key, "✨")
-                    await self._send_evolution(f"📈 **LEVEL UP**\n🧍 **{nick}** evoluiu {emoji} **{label}** para o nível **{new_level:g}**.")
+                    await self._send_evolution(''.join((format(t('📈 **LEVEL UP**\n🧍 **'), ''), format(nick, ''), format(t('** evoluiu '), ''), format(emoji, ''), ' **', format(label, ''), format(t('** para o nível **'), ''), format(new_level, ''.join(('g',))), '**.')))
         self.perks[nick] = latest
 
     @staticmethod
@@ -122,7 +124,7 @@ class FriendHostWatcher:
         for candidate in row[4:7]:
             value = clean_text(candidate)
             if value and not re.fullmatch(r"\d{2}\.\d{2}\.\d{4}|\d{2}:\d{2}:\d{2}", value): return value
-        return "Desconhecido"
+        return t('Desconhecido')
 
     async def _scan_data(self) -> None:
         current, deaths = await asyncio.to_thread(self._read_data_state)
@@ -132,13 +134,13 @@ class FriendHostWatcher:
                 await self._process_perks(nick, row)
             self.perks = {nick: row for nick, row in self.perks.items() if nick in current}
             for row in deaths["events"]:
-                await self._send_evolution(f"[MORTE] **{self._dead_nick(row)}** morreu no servidor.")
+                await self._send_evolution(''.join((format(t('[MORTE] **'), ''), format(self._dead_nick(row), ''), format(t('** morreu no servidor.'), ''))))
             self.death_count = deaths["total"]
             pending = self._event_batch
         finally:
             self._event_batch = None
         if self._event_omitted:
-            pending.append(f"Mais {self._event_omitted} eventos agrupados nesta leitura.")
+            pending.append(''.join((format(t('Mais '), ''), format(self._event_omitted, ''), format(t(' eventos agrupados nesta leitura.'), ''))))
         batch = ""
         for line in pending:
             if len(batch) + len(line) > 1900:
@@ -203,8 +205,8 @@ class FriendHostWatcher:
         match = re.search(r'"(.*?)"\s+(fully connected|disconnected)', line, re.I)
         if not match: return
         nick, action = clean_text(match.group(1)), clean_text(match.group(2)).casefold()
-        if action == "fully connected": await self._send_evolution(f"[LOGIN] {nick} entrou no servidor.")
-        elif action == "disconnected": await self._send_evolution(f"[LOGOUT] {nick} saiu do servidor.")
+        if action == "fully connected": await self._send_evolution(''.join((format(t('[LOGIN] '), ''), format(nick, ''), format(t(' entrou no servidor.'), ''))))
+        elif action == "disconnected": await self._send_evolution(''.join(('[LOGOUT] ', format(nick, ''), format(t(' saiu do servidor.'), ''))))
 
     async def _scan_logs(self) -> None:
         root_value = clean_text(getenv("LOGS_PATH"))
@@ -245,7 +247,7 @@ class FriendHostWatcher:
                         else:
                             omitted += 1
                 if omitted:
-                    formatted.append(f"[{omitted} mensagens adicionais agrupadas; consulte o log do servidor para o conteúdo completo.]")
+                    formatted.append(''.join(('[', format(omitted, ''), format(t(' mensagens adicionais agrupadas; consulte o log do servidor para o conteúdo completo.]'), ''))))
                 targets = []
                 webhook = clean_text(getenv("WEBHOOK_CHAT"))
                 if webhook:
@@ -270,7 +272,7 @@ class FriendHostWatcher:
                 for line in lines:
                     match = re.search(r'"(.*?)"\s+(fully connected|disconnected)', line, re.I)
                     if match and len(events) < 50:
-                        action = "entrou" if match.group(2).casefold() == "fully connected" else "saiu"
+                        action = t('entrou') if match.group(2).casefold() == "fully connected" else t('saiu')
                         events.append(f"{clean_text(match.group(1))[:80]} {action} do servidor.")
                 if events:
                     await self._send_evolution("\n".join(events)[:1900])

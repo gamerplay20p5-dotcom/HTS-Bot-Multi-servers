@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 from .tenant_scope import getenv, current_scope
 
 import json
@@ -34,7 +36,7 @@ def parse_players_list(value: str) -> list[str]:
 
 def get_perk_entries(perks_row: dict | None, include_zero: bool = True) -> list[dict]:
     if not perks_row: return []
-    values = [{"key": key, "label": PERK_LABELS.get(key, key), "visualLabel": f"{PERK_EMOJIS.get(key, '✨')} {PERK_LABELS.get(key, key)}", "emoji": PERK_EMOJIS.get(key, "✨"), "value": to_number(value)} for key, value in perks_row.items() if key not in IGNORED_PERK_KEYS]
+    values = [{"key": key, "label": t(PERK_LABELS.get(key, key)), "visualLabel": ''.join((format(PERK_EMOJIS.get(key, '✨'), ''), ' ', format(t(PERK_LABELS.get(key, key)), ''))), "emoji": PERK_EMOJIS.get(key, "✨"), "value": to_number(value)} for key, value in perks_row.items() if key not in IGNORED_PERK_KEYS]
     if not include_zero: values = [entry for entry in values if entry["value"] > 0]
     return sorted(values, key=lambda entry: (-entry["value"], entry["label"].casefold()))
 
@@ -69,8 +71,8 @@ def summarize_inventory(rows: list[dict]) -> dict:
     items: dict[tuple[str, str, str, str], dict] = {}
     categories: dict[str, int] = {}
     for row in rows:
-        name = get_field(row, ["itemdisplayname"], get_field(row, ["itemid"], "Item desconhecido"))
-        item_id, category, extra = get_field(row, ["itemid"]), get_field(row, ["itemcategory"], "Sem categoria"), get_field(row, ["itemextrainfo"])
+        name = get_field(row, ["itemdisplayname"], get_field(row, ["itemid"], t('Item desconhecido')))
+        item_id, category, extra = get_field(row, ["itemid"]), get_field(row, ["itemcategory"], t('Sem categoria')), get_field(row, ["itemextrainfo"])
         key = (name, item_id, category, extra)
         if key not in items: items[key] = {"name": name, "itemId": item_id, "category": category, "extra": extra, "count": 0}
         items[key]["count"] += 1
@@ -91,7 +93,7 @@ def _find_faction(nick: str, player_row: dict, faction_rows: list[dict]) -> dict
         if name and faction_name and name.casefold() == faction_name.casefold():
             return {"name": name, "owner": owner, "tag": get_field(row, ["tagname"], faction_tag), "players": players, "raw": row}
         if owner.casefold() == lowered or any(item.casefold() == lowered for item in players):
-            return {"name": name or faction_name or "Sem facção", "owner": owner, "tag": get_field(row, ["tagname"], faction_tag), "players": players, "raw": row}
+            return {"name": name or faction_name or t('Sem facção'), "owner": owner, "tag": get_field(row, ["tagname"], faction_tag), "players": players, "raw": row}
     if faction_name or faction_tag:
         return {"name": faction_name or "Sem nome", "owner": "", "tag": faction_tag, "players": [nick] if nick else [], "raw": None}
     return None
@@ -204,6 +206,10 @@ def discover_player_db_data(nick: str, steam_id: str = "", data_path: str | Path
 def collect_player_snapshot(nick_input: str, *, data: PzData | None = None, include_inventory: bool = False, include_db: bool = False) -> dict:
     csv_path = clean_text(getenv("CSV_BASE_PATH"))
     data = data or PzData(Path(csv_path) if csv_path else None)
+    if data.stats_source()[0] == "ttf":
+        entry = data.find_player(nick_input)
+        return {"found": bool(entry), "provider": "ttf", "entry": entry, "playerRow": entry["row"] if entry else {},
+                "actualNick": entry["nick"] if entry else nick_input, "availablePlayers": data.player_names()}
     available = data.player_names()
     requested = clean_text(nick_input)
     if not requested: return {"found": False, "availablePlayers": available, "reason": "missing_nick"}

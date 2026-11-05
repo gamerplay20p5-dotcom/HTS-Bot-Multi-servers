@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import time
 from typing import Any
 
@@ -49,7 +51,7 @@ def describe_server_error(result: dict[str, Any]) -> str:
 async def send_server_console_command(server: dict[str, Any], command: str) -> dict[str, Any]:
     missing = describe_missing_config(server)
     if missing:
-        return {"ok": False, "error": f"Configuracao do Pterodactyl incompleta: {', '.join(missing)}."}
+        return {"ok": False, "error": ''.join((format(t('Configuracao do Pterodactyl incompleta: '), ''), format(', '.join(missing), ''), '.'))}
     async with PterodactylClient(server) as client:
         result = await client.command(command)
     return {**result, "transport": "pterodactyl"}
