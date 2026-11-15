@@ -120,6 +120,21 @@ class ServerPicker(SetupView):
                 raise SetupError(t("Este servidor não está autorizado para este Discord."))
         view.authorize_button.disabled = not view.owner
         view.revoke_button.disabled = not view.owner
+        if setup(self.bot).authorized(self.guild_id, server["uuid"]):
+            # Prefetch Lua candidates on selection. No extra "Verify" click
+            # for the usual single-path PZ server.
+            inspected = await setup(self.bot).inspect(self.guild_id, server, actor_id=self.actor_id)
+            view.server, view.paths = inspected["server"], inspected["lua"]
+            if len(view.paths) == 1:
+                view.lua = view.paths[0]
+                view.finish.disabled = False
+            elif len(view.paths) > 1:
+                selector = discord.ui.Select(
+                    placeholder=t("Selecione a pasta Lua deste servidor"),
+                    options=[discord.SelectOption(label=p[:100], value=p) for p in view.paths], row=0
+                )
+                selector.callback = view.choose_lua
+                view.add_item(selector)
         await interaction.edit_original_response(embed=view.embed(), view=view)
 
     @discord.ui.button(label="Buscar por nome", row=1)
