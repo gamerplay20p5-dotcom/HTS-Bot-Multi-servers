@@ -376,3 +376,99 @@ async def test_real_http_client_root_list_and_file_write_routes():
         assert seen == [(PROOF, "test-code")]
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_fresh_pz_without_lua_can_be_bound_and_start_waiting_for_stats(setup_case, tmp_path):
+    """A fresh PZ instance has config/saves before Lua mod exports exist."""
+    from pathlib import Path
+    import os
+    from manguadu.guild_runtime import build_scope
+    from manguadu.tenant_scope import use_scope
+    from manguadu.pz_data import PzData
+
+    service, bot, client, selected = setup_case
+    volume = Path(os.environ["PTERO_VOLUMES_ROOT"]) / selected["uuid"]
+    (volume / ".cache/Lua").rmdir()
+    (volume / ".cache/Server").mkdir(parents=True)
+
+    await service.authorize(99, 1, selected)
+    inspection = await service.inspect(1, selected, actor_id=10)
+    assert inspection["authorized"] is True
+    assert inspection["lua"] == [".cache/Lua"]
+    binding = await service.auto_bind(10, 1, selected, ".cache/Lua")
+    assert binding["uuid"] == selected["uuid"]
+    assert bot.store.get_binding(1)
+    assert not (volume / ".cache/Lua").exists()
+
+    scope = build_scope(1, binding)
+    with use_scope(scope):
+        data = PzData(scope.environment["CSV_BASE_PATH"])
+        assert data.stats_source(force=True)[0] == "none"
+        # Later mod installation must be detected without re-binding.
+        ttf = volume / ".cache/Lua/ttf_stats_mp"
+        ttf.mkdir(parents=True)
+        (ttf / "index.txt").write_text("char_1|giroto|First|Last\n", encoding="utf-8")
+        (ttf / "char_1.txt").write_text(
+            "version=1\ndeleted=false\ncharacterID=char_1\nusername=giroto\nisDead=false\nlastSeenKills=2\ngameTimeSeconds=3600\n",
+            encoding="utf-8",
+        )
+        assert data.diagnostics()["provider"] == "ttf"
+        assert data.diagnostics()["characters"] == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_manual_proof_for_same_guild_rotates_automatically(setup_case):
+    from manguadu.guild_runtime import normalize_binding
+
+    service, bot, client, selected = setup_case
+    await service.authorize(99, 1, selected)
+    binding = normalize_binding(selected["identifier"], selected["uuid"], selected["label"], ".cache/Lua")
+    old_token = "friendhost:1:old-manual-proof"
+    bot.store.pending_binding(1, {
+        "binding": binding, "token": old_token,
+        "expires": time.time() - 60
+    })
+    client.files[PROOF] = old_token
+
+    result = await service.auto_bind(10, 1, selected, ".cache/Lua")
+    assert result["uuid"] == selected["uuid"]
+    assert len(client.writes) == 1
+    assert client.files[PROOF] != old_token
+    assert client.files[PROOF].startswith("friendhost:1:")
+    assert bot.store.get_binding(1)
+    assert bot.store.pending_binding(1) is None
+
+
+@pytest.mark.asyncio
+async def test_unknown_or_foreign_expired_proof_remains_untouched(setup_case):
+    from manguadu.guild_runtime import normalize_binding
+
+    service, bot, client, selected = setup_case
+    await service.authorize(99, 1, selected)
+    binding = normalize_binding(selected["identifier"], selected["uuid"], selected["label"], ".cache/Lua")
+    bot.store.pending_binding(1, {
+        "binding": binding, "token": "friendhost:1:old",
+        "expires": time.time() - 60
+    })
+    for text in ("friendhost:2:foreign", "other unrecognized proof"):
+        client.files[PROOF] = text
+        with pytest.raises(SetupError):
+            await service.auto_bind(10, 1, selected, ".cache/Lua")
+        assert client.files[PROOF] == text
+    assert client.writes == []
+    assert bot.store.get_binding(1) is None
+
+
+@pytest.mark.asyncio
+async def test_missing_lua_without_pz_configuration_is_not_auto_bound(setup_case):
+    from pathlib import Path
+    import os
+    service, bot, client, selected = setup_case
+    volume = Path(os.environ["PTERO_VOLUMES_ROOT"]) / selected["uuid"]
+    (volume / ".cache/Lua").rmdir()
+    await service.authorize(99, 1, selected)
+    with pytest.raises(SetupError, match="Pasta Lua"):
+        await service.inspect(1, selected, actor_id=10)
+    assert client.writes == []
+    assert bot.store.get_binding(1) is None
