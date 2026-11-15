@@ -120,6 +120,21 @@ class ServerPicker(SetupView):
                 raise SetupError(t("Este servidor não está autorizado para este Discord."))
         view.authorize_button.disabled = not view.owner
         view.revoke_button.disabled = not view.owner
+        if setup(self.bot).authorized(self.guild_id, server["uuid"]):
+            # Prefetch Lua candidates on selection. No extra "Verify" click
+            # for the usual single-path PZ server.
+            inspected = await setup(self.bot).inspect(self.guild_id, server, actor_id=self.actor_id)
+            view.server, view.paths = inspected["server"], inspected["lua"]
+            if len(view.paths) == 1:
+                view.lua = view.paths[0]
+                view.finish.disabled = False
+            elif len(view.paths) > 1:
+                selector = discord.ui.Select(
+                    placeholder=t("Selecione a pasta Lua deste servidor"),
+                    options=[discord.SelectOption(label=p[:100], value=p) for p in view.paths], row=0
+                )
+                selector.callback = view.choose_lua
+                view.add_item(selector)
         await interaction.edit_original_response(embed=view.embed(), view=view)
 
     @discord.ui.button(label="Buscar por nome", row=1)
@@ -150,8 +165,16 @@ class SelectedServer(SetupView):
 
     def embed(self):
         embed = discord.Embed(title=t("Servidor selecionado"), description=discord.utils.escape_markdown(self.server["label"]), color=0x28D17C)
+        lua_label = self.lua or t("Verifique o servidor")
+        if self.lua and self.lua == ".cache/Lua" and self.paths == [".cache/Lua"]:
+            from pathlib import Path
+            import os
+            base = Path(os.getenv("PTERO_VOLUMES_ROOT", "/var/lib/pterodactyl/volumes"))
+            lua_path = base / self.server["uuid"] / self.lua
+            if not lua_path.is_dir():
+                lua_label += t(" (prevista, aguardando arquivos Lua)")
         for key, value in (("Ptero ID", self.server["identifier"]), ("UUID", self.server["uuid"]), ("Node", self.server["node"] or "?"),
-                           (t("Pasta Lua"), self.lua or t("Verifique o servidor")), (t("Autorização"), t("Permitido") if setup(self.bot).authorized(self.guild_id, self.server["uuid"]) else t("Aguardando proprietário do aplicativo"))):
+                           (t("Pasta Lua"), lua_label), (t("Autorização"), t("Permitido") if setup(self.bot).authorized(self.guild_id, self.server["uuid"]) else t("Aguardando proprietário do aplicativo"))):
             embed.add_field(name=key, value=str(value)[:1024], inline=False)
         embed.set_footer(text=t("Somente o arquivo temporário de vínculo poderá ser criado. Arquivos do jogo são preservados."))
         return embed

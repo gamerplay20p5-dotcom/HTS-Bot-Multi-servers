@@ -31,11 +31,20 @@ def resolve_volume(binding: dict) -> tuple[Path, Path]:
     lua = (volume / binding["lua"]).resolve()
     if volume != expected or not volume.is_relative_to(root) or not lua.is_relative_to(volume):
         raise ValueError(t('O volume ou a pasta Lua apontam para fora da raiz Wings autorizada.'))
-    if not volume.is_dir() or not lua.is_dir():
-        raise ValueError(t('Volume/Pasta Lua indisponivel neste dedicado. Monte o volume Wings na raiz configurada e confira a permissao de leitura do bot.'))
+    if not volume.is_dir():
+        raise ValueError(t('Volume Wings indisponível neste dedicado.'))
     from .stats.discovery import safe_child
     if not safe_child(volume, volume / binding["lua"], enforce_scope=False):
         raise ValueError(t('Volume Wings inseguro: caminho externo ou link simbólico.'))
+    if not lua.is_dir():
+        # Missing Lua exports are normal on a fresh PZ server. Only permit
+        # the known default path when the game's own Server directory exists.
+        config_dir = volume / ".cache" / "Server"
+        if (binding["lua"] != ".cache/Lua"
+                or lua.exists() or lua.is_symlink()
+                or not config_dir.is_dir()
+                or not safe_child(volume, config_dir, enforce_scope=False)):
+            raise ValueError(t('Pasta Lua indisponível; a estrutura PZ ainda não foi identificada ou o caminho não é seguro.'))
     return volume, lua
 
 def build_scope(guild_id: int, binding: dict) -> GuildScope:
