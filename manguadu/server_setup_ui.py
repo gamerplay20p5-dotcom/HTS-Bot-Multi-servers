@@ -150,8 +150,16 @@ class SelectedServer(SetupView):
 
     def embed(self):
         embed = discord.Embed(title=t("Servidor selecionado"), description=discord.utils.escape_markdown(self.server["label"]), color=0x28D17C)
+        lua_label = self.lua or t("Verifique o servidor")
+        if self.lua and self.lua == ".cache/Lua" and self.paths == [".cache/Lua"]:
+            from pathlib import Path
+            import os
+            base = Path(os.getenv("PTERO_VOLUMES_ROOT", "/var/lib/pterodactyl/volumes"))
+            lua_path = base / self.server["uuid"] / self.lua
+            if not lua_path.is_dir():
+                lua_label += t(" (prevista, aguardando arquivos Lua)")
         for key, value in (("Ptero ID", self.server["identifier"]), ("UUID", self.server["uuid"]), ("Node", self.server["node"] or "?"),
-                           (t("Pasta Lua"), self.lua or t("Verifique o servidor")), (t("Autorização"), t("Permitido") if setup(self.bot).authorized(self.guild_id, self.server["uuid"]) else t("Aguardando proprietário do aplicativo"))):
+                           (t("Pasta Lua"), lua_label), (t("Autorização"), t("Permitido") if setup(self.bot).authorized(self.guild_id, self.server["uuid"]) else t("Aguardando proprietário do aplicativo"))):
             embed.add_field(name=key, value=str(value)[:1024], inline=False)
         embed.set_footer(text=t("Somente o arquivo temporário de vínculo poderá ser criado. Arquivos do jogo são preservados."))
         return embed
