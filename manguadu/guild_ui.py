@@ -199,6 +199,8 @@ class ServerConfigView(GuildView):
                 description += ''.join((format(t('\nAtraso de leitura dos logs: '), ''), format(backlog, ''.join((',',))), format(t(' bytes pendentes.'), '')))
                 source = runtime.data._stats_discovery[1][0]
                 description += "\n" + t('Fonte: ') + {"ttf": "TTF Stats MP", "friendhost": "FriendHost", "none": t('Nenhuma compatível')}[source]
+                if source == "none":
+                    description += t("\nVínculo ativo. Aguardando arquivos FriendHost/TTF; a detecção será repetida automaticamente.")
             else:
                 description += t('\nLeitura local indisponível: confira o volume e as permissões no dedicado.')
         else:
