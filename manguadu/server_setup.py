@@ -127,9 +127,16 @@ class ServerSetup:
         if not expected.is_dir():
             raise SetupError(t("Volume ausente neste node Wings. Servidores remotos precisam de um volume montado com segurança neste dedicado."))
         candidates = lua_candidates(expected)
-        if not candidates:
-            raise SetupError(t("Pasta Lua não encontrada ou sem permissão de leitura neste volume."))
-        return candidates
+        if candidates:
+            return candidates
+        # PZ creates .cache/Server before mods create their Lua exports.
+        # Treat this as a pending data path, not an absent PZ installation.
+        cache = expected / ".cache"
+        server_config = cache / "Server"
+        if (cache.is_dir() and not cache.is_symlink()
+                and server_config.is_dir() and not server_config.is_symlink()):
+            return [".cache/Lua"]
+        raise SetupError(t("Pasta Lua não encontrada. O servidor ainda não possui uma estrutura PZ reconhecida ou o volume está inacessível."))
 
     async def auto_bind(self, actor_id, guild_id, server, lua):
         lock = self._locks.setdefault(guild_id, asyncio.Lock())
@@ -155,8 +162,24 @@ class ServerSetup:
                 pending = self.bot.store.pending_binding(guild_id)
                 if exists:
                     proof = check(await client.read_file(PROOF))
-                    if not pending or pending["expires"] <= time.time() or pending["binding"] != binding or proof.get("text", "").strip() != pending["token"]:
-                        raise SetupError(t("O arquivo de vínculo já existe. Ele foi preservado. Valide o código pendente ou revise o arquivo pelo gerenciador do Pterodactyl."))
+                    current_token = proof.get("text", "").strip()
+                    # Renew only a proof matching a persisted attempt by this
+                    # guild for this UUID. Never overwrite an unknown token.
+                    same_pending = (
+                        pending is not None
+                        and pending.get("binding", {}).get("uuid") == binding["uuid"]
+                        and current_token == pending.get("token")
+                        and current_token.startswith(f"friendhost:{guild_id}:")
+                    )
+                    if not same_pending:
+                        raise SetupError(t("O arquivo existente não corresponde à prova desta comunidade. Nenhum arquivo foi sobrescrito."))
+                    if pending["expires"] <= time.time() or pending["binding"] != binding or not pending.get("automatic"):
+                        if not self.authorized(guild_id, server["uuid"]):
+                            raise SetupError(t("A autorização foi revogada antes da conclusão."))
+                        pending = {"binding": binding, "token": f"friendhost:{guild_id}:{server['uuid']}:{secrets.token_urlsafe(24)}", "expires": time.time() + 900, "automatic": True}
+                        # A failed write must not invalidate the previous proof.
+                        check(await client.write_file(PROOF, pending["token"]))
+                        self.bot.store.pending_binding(guild_id, pending)
                 else:
                     if not self.authorized(guild_id, server["uuid"]):
                         raise SetupError(t("A autorização foi revogada antes da conclusão."))
